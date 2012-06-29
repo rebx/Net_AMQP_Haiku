@@ -1,0 +1,6 @@
+Revision history for Perl extension Net::AMQP::Haiku.
+
+0.01  Wed Jun 27 10:19:27 2012
+	- original version; created by h2xs 1.23 with options
+		-AX -n Net::AMQP::Haiku -O
+

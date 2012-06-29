@@ -1,0 +1,5 @@
+---
+host: <HOSTNAME>
+port: <PORT>
+debug: 0
+

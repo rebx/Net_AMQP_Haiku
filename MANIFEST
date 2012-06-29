@@ -1,0 +1,7 @@
+Changes
+Makefile.PL
+MANIFEST
+net-amqp-haiku.komodoproject
+README
+t/Net-AMQP-Haiku.t
+lib/Net/AMQP/Haiku.pm
