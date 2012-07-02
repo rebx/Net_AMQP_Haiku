@@ -1,5 +1,6 @@
 ---
-host: <HOSTNAME>
-port: <PORT>
+host: localhost
+port: 5672
 debug: 0
+queue: 'foo'
 
