@@ -102,11 +102,21 @@ sub open_channel {
     $channel ||= $self->{channel};
     my $chan = Net::AMQP::Protocol::Channel::Open->new( channel => $channel );
 
-    my $open_frame = Net::AMQP::Frame::Method->new(
+    my $open_channel_frame = Net::AMQP::Frame::Method->new(
         channel      => $channel,
         method_frame => Net::AMQP::Protocol::Channel::Open->new(), );
-    $self->_send_frames($open_frame);
+    $self->_send_frames($open_channel_frame);
+    my ($open_channel_resp) = $self->_recv();
 
+    $self->{debug}
+        and print "Open channel response: "
+        . Dumper($open_channel_resp) . "\n";
+
+    if (!$open_channel_resp->method_frame->isa(
+            'Net::AMQP::Protocol::Channel::OpenOk') )
+    {
+        return 0;
+    }
     return 1;
 }
 
@@ -159,10 +169,11 @@ sub set_queue {
     $self->{debug} and print "Setting queue to $queue_name\n";
     my $queue_opts = _queue_properties();
     $queue_opts->{queue} = $queue_name;
-    $self->{debug} and print "Queue Hash: " . Dumper($queue_opts) . "\n";
     my $amqp_queue
         = Net::AMQP::Protocol::Queue::Declare->new( %{$queue_opts} );
 
+    $self->{debug}
+        and print "Declare queue frame: " . Dumper($amqp_queue) . "\n";
     $self->_send_frames($amqp_queue) or return;
     my ($resp_set_queue) = $self->_recv() or return;
 
@@ -284,9 +295,10 @@ sub _recv {
     # get the lenght of data we need to read
     my $data_len = ( _unpack_raw_data($data) )[2];
 
-    if ( $data_len < _HEADER_LENGTH ) {
-        $data .= $self->_read_socket(1024) or return;
-    }
+    #if ( $data_len < _HEADER_LENGTH ) {
+    #    #$data .= $self->_read_socket(1024) or return;
+    #    warn "Socket response length is less than header length!"
+    #}
 
     $self->{debug} and print "Reading data of length $data_len\n";
 
@@ -565,13 +577,15 @@ sub _connect_handshake {
         insist       => 1, );
     $self->_send_frames($open_conn) or return;
 
-    #my ($resp_open) = $self->_recv() or return;
-    #
-    #if (!$resp_open->method_frame->isa(
-    #        'Net::AMQP::Protocol::Connection::OpenOk') )
-    #{
-    #    return 0;
-    #}
+    my ($resp_open) = $self->_recv() or return;
+
+    $self->{debug}
+        and print "Frame open response: \n" . Dumper($resp_open) . "\n";
+    if (!$resp_open->method_frame->isa(
+            'Net::AMQP::Protocol::Connection::OpenOk') )
+    {
+        return 0;
+    }
 
     return 1;
 }
