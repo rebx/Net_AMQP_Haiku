@@ -15,15 +15,11 @@ use Try::Tiny;
 use Carp qw(carp croak confess);
 use Data::Dumper qw(Dumper);
 use Net::AMQP;
-
-#use Net::AMQP::Common qw(:all);
-#use Net::AMQP::Frame;
-#use Net::AMQP::Protocol;
-#use Net::AMQP::Protocol::Base;
 use Net::AMQP::Protocol::v0_8;
 use IO::Socket;
 use Socket qw(IPPROTO_TCP TCP_NODELAY);
 use Net::AMQP::Haiku::Constants;
+use Net::AMQP::Haiku::Helpers;
 
 sub new {
     my $class = shift;
@@ -36,6 +32,7 @@ sub new {
         password       => DEFAULT_PASSWORD,
         locale         => DEFAULT_LOCALE,
         queue          => DEFAULT_QUEUE,
+        channel        => DEFAULT_CHANNEL,
         debug          => FLAG_DEBUG,
         auth_mechanism => DEFAULT_AUTH_MECHANISM,
         is_connected   => 0,
@@ -50,7 +47,6 @@ sub new {
         &_parse_args( $self, @_ );
     }
 
-    #$self->connect();
     return $self;
 }
 
@@ -99,14 +95,11 @@ sub open_channel {
     my ( $self, $channel ) = @_;
 
     $self->connect() if ( !$self->{is_connected} );
-    $channel ||= $self->{channel};
-    my $chan = Net::AMQP::Protocol::Channel::Open->new( channel => $channel );
+    $channel = $self->{channel} if ( !defined($channel) );
+    my $open_channel = Net::AMQP::Protocol::Channel::Open->new();
 
-    my $open_channel_frame = Net::AMQP::Frame::Method->new(
-        channel      => $channel,
-        method_frame => Net::AMQP::Protocol::Channel::Open->new(), );
-    $self->_send_frames($open_channel_frame);
-    my ($open_channel_resp) = $self->_recv();
+    $self->_send_frames( $open_channel, $channel ) or return;
+    my ($open_channel_resp) = $self->_recv_frames() or return;
 
     $self->{debug}
         and print "Open channel response: "
@@ -115,6 +108,7 @@ sub open_channel {
     if (!$open_channel_resp->method_frame->isa(
             'Net::AMQP::Protocol::Channel::OpenOk') )
     {
+        carp "Unable to set channel to $channel";
         return 0;
     }
     return 1;
@@ -123,32 +117,30 @@ sub open_channel {
 sub close_channel {
     my ( $self, $channel ) = @_;
 
-    $channel ||= $self->{channel};
+    $channel = $self->{channel} if ( !defined($channel) );
     return unless $channel;
 
     my $frame_close = Net::AMQP::Frame::Method->new(
         method_frame => Net::AMQP::Protocol::Channel::Close->new() );
     $self->_send_frames($frame_close);
-    my @frames = $self->_read();
+    my ($frame_close_resp) = $self->_recv_frames();
 
-    for my $frame (@frames) {
-        return 1
-            if (
-            $frame->isa('Net::AMQP::Frame::Method')
-            and $frame->method_frame->isa(
-                'Net::AMQP::Protocol::Channel::CloseOk') );
+    if (!$frame_close_resp->method_frame->isa(
+            'Net::AMQP::Protocol::Channel::CloseOk') )
+    {
+        warn "Unable to close channel $channel properly!";
+        return 0;
     }
-    warn "Unable to close channel $channel properly!";
-    return 0;
+    return 1;
 }
 
 sub close {
     my ($self) = @_;
 
     return 1 if ( !$self->{is_connected} );
-    $self->close_channel( $self->{channel} );
     local $@;
     try {
+        $self->close_channel( $self->{channel} );
         close( $self->{connection} )
             or die "Unable to close socket connection properly: $!\n";
     }
@@ -175,12 +167,15 @@ sub set_queue {
     $self->{debug}
         and print "Declare queue frame: " . Dumper($amqp_queue) . "\n";
     $self->_send_frames($amqp_queue) or return;
-    my ($resp_set_queue) = $self->_recv() or return;
+    my ($resp_set_queue) = $self->_recv_frames() or return;
 
     if (!$resp_set_queue->method_frame->isa(
             'Net::AMQP::Protocol::Queue::DeclareOk') )
     {
         carp "Unable to set queue name to $queue_name";
+        $self->{debug}
+            and print "set queue response: \n"
+            . Dumper($resp_set_queue) . "\n";
         return 0;
     }
     return 1;
@@ -191,7 +186,7 @@ sub send {
 
     return unless $msg;
 
-    my $payload = $self->_serialize($msg);
+    my $payload = serialize($msg);
     $self->{debug} and print "Sending payload " . Dumper($payload) . "\n";
     $self->_send($payload);
     return 1;
@@ -200,7 +195,23 @@ sub send {
 sub receive {
     my ($self) = @_;
 
-    my @frames = $self->_recv() or return;
+    $self->_send_frames(make_get_header());
+    
+    my ($get_resp) = $self->_recv_frames() or return;
+    
+    if (!$get_resp->method_frame->isa('Net::AMQP::Protocol::Basic::GetOk')) {
+        return;
+    }
+    
+    my ($msg_hdr) = $self->_read_frames();
+    my $tmp_len = 0;
+    my @msg_frames = ();
+    while ($tmp_len < $msg_hdr->body_size()) {
+        my ($raw_body) = $self->_read_frames();
+        $tmp_len += length($raw_body->payload);
+        push (@msg_frames, $raw_body);
+    }
+    my @frames = $self->_recv_frames() or return;
 
     my $mesg;
     for my $frame (@frames) {
@@ -234,13 +245,14 @@ sub DESTROY {
 
 ###Private Methods###
 sub _send_frames {
-    my ( $self, $frame, $chan ) = @_;
+    my ( $self, $frame, $chan_id ) = @_;
 
-    $chan ||= $self->{channel};
+    $chan_id = $self->{channel} if ( !defined($chan_id) );
+    $self->{debug} and print "Sending frame to channel $chan_id\n";
     if ( $frame->isa('Net::AMQP::Protocol::Base') ) {
         $frame = $frame->frame_wrap();
     }
-    $frame->channel($chan);
+    $frame->channel($chan_id);
 
     $self->_send( $frame->to_raw_frame() ) or return 0;
     return 1;
@@ -249,16 +261,29 @@ sub _send_frames {
 sub _recv_frames {
     my ($self) = @_;
 
-    my @frames = $self->_recv();
-    return @frames;
+    my $frame = $self->_recv() or return;
+    return deserialize($frame);
 }
 
 sub _send {
     my ( $self, $payload ) = @_;
 
     return 0 if ( !defined($payload) );
-    $self->_connect_sock()
-        if ( !$self->{connection}->isa('IO::Socket::INET') );
+
+    local $@;
+    try {
+        setsockopt( $self->{connection}, SOL_SOCKET, SO_SNDTIMEO,
+            pack( 'L!L!', $self->{timeout}, 0 ) )
+            or die
+            "Unable to set socket receive timeout to $self->{timeout}: $!\n";
+    }
+    catch {
+        my $err = $_;
+        chomp($err);
+        $@ = $err;
+    };
+    carp $@ if ($@);
+
     $self->{debug}
         and print "Writing payload: \n" . Dumper($payload) . "\n";
     my $payload_len = length($payload);
@@ -282,46 +307,6 @@ sub _send {
 
 sub _recv {
     my ($self) = @_;
-    $self->_connect_sock()
-        if ( !$self->{connection}->isa('IO::Socket::INET') );
-    my @frames = ();
-
-    my ( $type_id, $channel, $payload );
-
-    # read teh amqp header first
-    my $hdr_len = _HEADER_LENGTH + 1;
-    my ( $data, $read_len ) = $self->_read_socket($hdr_len) or return 0;
-
-    # get the lenght of data we need to read
-    my $data_len = ( _unpack_raw_data($data) )[2];
-
-    #if ( $data_len < _HEADER_LENGTH ) {
-    #    #$data .= $self->_read_socket(1024) or return;
-    #    warn "Socket response length is less than header length!"
-    #}
-
-    $self->{debug} and print "Reading data of length $data_len\n";
-
-    while ( $data_len > 0 ) {
-        my ( $payload, $payload_len ) = $self->_read_socket($data_len)
-            or return;
-        $data_len -= $payload_len;
-        $data .= $payload;
-        $self->{debug} and print "read payload: " . Dumper($payload);
-    }
-    $self->{debug} and print "read data: " . Dumper($data);
-
-    return _deserialize($data);
-}
-
-sub _unpack_raw_data {
-    my ($data) = @_;
-    return unless $data;
-    return unpack 'CnN', substr $data, 0, 7, '';
-}
-
-sub _read_socket {
-    my ( $self, $length ) = @_;
 
     local $@;
     try {
@@ -336,7 +321,48 @@ sub _read_socket {
         $@ = $err;
     };
     carp $@ if ($@);
-    $length ||= _HEADER_LENGTH + 1;
+
+    my ( $data, $data_len ) = $self->_read_socket(DEFAULT_RECV_LEN);
+
+    unless ($data) {
+        $data = $self->_read_socket(DEFAULT_RECV_LEN) or return;
+    }
+
+    # get the header
+    my $header = substr $data, 0, _HEADER_LENGTH, '';
+    return unless $header;
+    my ( $type_id, $channel, $size ) = unpack 'CnN', $header;
+
+    # Read the body
+    my $body = substr $data, 0, $size, '';
+
+    # Do we have more to read?
+    if ( length $body < $size || length $data == 0 ) {
+        my $size_remaining = $size + _FOOTER_LENGTH - length $body;
+        while ( $size_remaining > 0 ) {
+            my $chunk = $self->_read_from_socket($size_remaining);
+            $size_remaining -= length $chunk;
+            $data .= $chunk;
+        }
+        $body .= substr( $data, 0, $size - length($body), '' );
+    }
+
+    # Read the footer and check the octet value
+    my $footer = substr $data, 0, _FOOTER_LENGTH, '';
+    my $footer_octet = unpack 'C', $footer;
+
+    # TEH FOOTER MUST EXISTETH!
+    carp "Invalid footer: $footer_octet\n"
+        unless $footer_octet == _FOOTER_OCT;
+    my $full_msg = $header . $body . $footer;
+    return $full_msg;
+}
+
+sub _read_socket {
+    my ( $self, $length ) = @_;
+
+    # default length is header + emty body + footer
+    $length = _HEADER_LENGTH + _HEADER_LENGTH if ( !defined($length) );
     $self->{debug}
         and print "_read_socket is reading $length characters\n";
     my ( $payload, $data_len );
@@ -344,11 +370,10 @@ sub _read_socket {
 
         local $@;
         try {
-            $data_len = read( $self->{connection}, $payload, $length )
+            $data_len = $self->{connection}->sysread( $payload, $length )
                 or die "Unable to read socket: $!\n";
-            die "Socket read error! Length mismatch! $data_len vs $length\n"
-                if ( $data_len != $length );
-            $self->{debug} and print "Read $length characters of data\n";
+            $self->{debug}
+                and print "Read $data_len of $length characters of data\n";
         }
         catch {
             my $err = $_;
@@ -364,53 +389,46 @@ sub _read_socket {
     return;
 }
 
-sub _deserialize {
-    my ($data) = @_;
-    return unless $data;
-
-    return Net::AMQP->parse_raw_frames( \$data );
-}
-
-sub _serialize {
-    my ( $self, $data, $channel, $args, $header_args, $mandatory, $immediate,
-        $ticket )
-        = @_;
-
-    $channel ||= $self->{channel};
-    my $ser_frame = Net::AMQP::Protocol::Basic::Publish->new(
-        exchange  => $self->{exchange},
-        mandatory => $mandatory,
-        immediate => $immediate,
-        %{$args},
-        ticket => $ticket, );
-
-    my $frame_hdr = Net::AMQP::Protocol::Basic::ContentHeader->new(
-        content_type     => 'application/octet-stream',
-        content_encoding => undef,
-        headers          => {},
-        delivery_mode    => 1,
-        priority         => 1,
-        correlation_id   => 1234,
-        expiration       => undef,
-        message_id       => undef,
-        timestamp        => time,
-        type             => undef,
-        user_id          => $self->{user_name},
-        app_id           => undef,
-        cluster_id       => undef,
-        %{$header_args}, );
-
-    my $frame_bdy = Net::AMQP::Frame::Body->new( payload => $data );
-    my $frame_pub = $ser_frame->frame_wrap();
-    $frame_pub->channel( $self->{channel} );
-    $frame_hdr->channel( $self->{channel} );
-    $frame_bdy->channel( $self->{channel} );
-
-    return
-          $frame_pub->to_raw_frame()
-        . $frame_hdr->to_raw_frame()
-        . $frame_bdy->to_raw_frame();
-}
+#sub _serialize {
+#    my ( $self, $data, $channel, $args, $header_args, $mandatory, $immediate,
+#        $ticket )
+#        = @_;
+#
+#    $channel = $self->{channel} if ( !defined($channel) );
+#    my $ser_frame = Net::AMQP::Protocol::Basic::Publish->new(
+#        exchange  => $self->{exchange},
+#        mandatory => $mandatory,
+#        immediate => $immediate,
+#        %{$args},
+#        ticket => $ticket, );
+#
+#    my $frame_hdr = Net::AMQP::Protocol::Basic::ContentHeader->new(
+#        content_type     => 'application/octet-stream',
+#        content_encoding => undef,
+#        headers          => {},
+#        delivery_mode    => 1,
+#        priority         => 1,
+#        correlation_id   => 1234,
+#        expiration       => undef,
+#        message_id       => undef,
+#        timestamp        => time,
+#        type             => undef,
+#        user_id          => $self->{user_name},
+#        app_id           => undef,
+#        cluster_id       => undef,
+#        %{$header_args}, );
+#
+#    my $frame_bdy = Net::AMQP::Frame::Body->new( payload => $data );
+#    my $frame_pub = $ser_frame->frame_wrap();
+#    $frame_pub->channel( $self->{channel} );
+#    $frame_hdr->channel( $self->{channel} );
+#    $frame_bdy->channel( $self->{channel} );
+#
+#    return
+#          $frame_pub->to_raw_frame()
+#        . $frame_hdr->to_raw_frame()
+#        . $frame_bdy->to_raw_frame();
+#}
 
 sub _load_spec_file {
     my ( $self, $spec_file ) = @_;
@@ -507,7 +525,7 @@ sub _connect_sock {
 sub _connect_handshake {
     my ($self) = @_;
 
-    # greet the server
+    # greet the server...OHAI!!!
     $self->{debug} and print "Sending greeting to server $self->{host}\n";
     local $@;
     try {
@@ -522,7 +540,8 @@ sub _connect_handshake {
     };
     carp "server greeting failed: $@" if ($@);
 
-    my ($resp_frame) = $self->_recv() or return;
+    # check if you got a Connection::Start frame back
+    my ($resp_frame) = $self->_recv_frames() or return;
     $self->{debug}
         and print "Greeting result: " . Dumper($resp_frame) . "\n";
     if (!$resp_frame->isa('Net::AMQP::Frame::Method')
@@ -533,7 +552,7 @@ sub _connect_handshake {
     }
     $self->_check_server_capabilities($resp_frame) or return;
 
-    # send startok
+    # Now send startok
     $self->{debug}
         and print "Starting connection to server $self->{host}\n";
     my $shake_frame = Net::AMQP::Protocol::Connection::StartOk->new(
@@ -546,10 +565,10 @@ sub _connect_handshake {
         locale => $self->{locale}, );
     $self->{debug}
         and print "Sending startok frame " . Dumper($shake_frame) . "\n";
-    $self->_send_frames($shake_frame) or return;
+    $self->_send_frames( $shake_frame, HANDSHAKE_CHANNEL ) or return;
 
-    my ($resp_shake) = $self->_recv() or return;
-
+    # check if you got a Connection::Tune frame back
+    my ($resp_shake) = $self->_recv_frames() or return;
     $self->{debug}
         and print "Start connection response: " . Dumper($resp_shake) . "\n";
 
@@ -568,22 +587,25 @@ sub _connect_handshake {
         heartbeat   => $resp_shake->method_frame->heartbeat, );
 
     $self->{debug} and print "Tune frame: " . Dumper($tune_frame) . "\n";
-    $self->_send_frames($tune_frame) or return;
+    $self->_send_frames( $tune_frame, HANDSHAKE_CHANNEL ) or return;
 
-    # open the connection
+    # Send the Connection::Open frame
     my $open_conn = Net::AMQP::Protocol::Connection::Open->new(
         virtual_host => $self->{vhost},
         capabilities => '',
         insist       => 1, );
-    $self->_send_frames($open_conn) or return;
+    $self->_send_frames( $open_conn, HANDSHAKE_CHANNEL ) or return;
 
-    my ($resp_open) = $self->_recv() or return;
-
+    # Check if you got the Connection::OpenOk frame back
+    my ($resp_open) = $self->_recv_frames() or return;
     $self->{debug}
         and print "Frame open response: \n" . Dumper($resp_open) . "\n";
     if (!$resp_open->method_frame->isa(
             'Net::AMQP::Protocol::Connection::OpenOk') )
     {
+        carp "Unable to establish initial communication properly. ";
+        $self->{debug}
+            and print "Server response is: " . Dumper($resp_open);
         return 0;
     }
 
@@ -617,6 +639,7 @@ sub _check_server_capabilities {
     $self->{debug} and print "Server capabilities are ok\n";
     return 1;
 }
+
 ###Private Methods###
 
 1;
@@ -635,13 +658,13 @@ Net::AMQP::Haiku - A simple Perl extension for AMQP.
   });
   $amqp->open_channel();
   $amqp->send("ohai!");
+  $amqp->close();
 
 =head1 DESCRIPTION
 
     The design for this module is to be as simple as possible -- use only the
 standard perl libraries, apart from Net::AMQP, and be compatible from
 Perl version 5.8.8.
-
 
 =head2 EXPORT
 

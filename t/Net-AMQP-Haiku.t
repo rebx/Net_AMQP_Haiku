@@ -45,6 +45,7 @@ ok( $f->connect(), "test connect to $host:$port" );
 isnt( $f->{connection}, undef, "test socket is not undef" );
 ok( $f->{connection}->isa('IO::Socket::INET'),
     "test socket is an instance of IO::Socket::INET" );
+
 ok( $f->open_channel(),    "test open channel" );
 ok( $f->set_queue($queue), "test set queue to $queue" );
 ok( $f->send($msg_send),   "test send message to server" );
