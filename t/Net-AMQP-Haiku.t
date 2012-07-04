@@ -12,6 +12,8 @@ my $name    = 'Net::AMQP::Haiku';
 my @methods = qw(spec_file channel _load_spec_file _set_channel
     _connect_sock _parse_args connect set_queue open_channel send close);
 
+my @tuning_params = qw(channel_max frame_max heartbeat);
+
 BEGIN {
     use FindBin qw($Bin);
     use lib "$Bin/../lib";
@@ -45,12 +47,22 @@ ok( $f->connect(), "test connect to $host:$port" );
 isnt( $f->{connection}, undef, "test socket is not undef" );
 ok( $f->{connection}->isa('IO::Socket::INET'),
     "test socket is an instance of IO::Socket::INET" );
+is( $f->{is_connected}, 1, "test is_connected flag is true" );
+isnt( $f->{tuning_parameters}->{channel_max},
+    undef, "test tuning parameter channel_max is defined" );
+isnt( $f->{tuning_parameters}->{frame_max},
+    undef, "test tuning parameter frame_max is defined" );
+isnt( $f->{tuning_parameters}->{heartbeat},
+    undef, "test tuning parameter heartbeat is defined" );
 
 ok( $f->open_channel(),    "test open channel" );
 ok( $f->set_queue($queue), "test set queue to $queue" );
-ok( $f->send($msg_send),   "test send message to server" );
-my $msg_recv = '';
-ok( $msg_recv = $f->get($queue), "Test get message on queue $queue" );
+is ($f->{queue}, $queue, "test queue attribute is set to $queue");
+ok( $f->send($msg_send), "test send message to server" );
+$f->{debug} = 1;
+my $msg_recv = $f->get($queue);
+
+#ok( $msg_recv = $f->get($queue), "Test get message on queue $queue" );
 is( $msg_recv, $msg_send, "Test got the ping message $msg_send" );
 ok( $f->close(), "test close connection" );
 

@@ -33,6 +33,8 @@ sub new {
         locale         => DEFAULT_LOCALE,
         queue          => DEFAULT_QUEUE,
         channel        => DEFAULT_CHANNEL,
+        exchange       => DEFAULT_EXCHANGE,
+        routing_key    => DEFAULT_QUEUE,
         debug          => FLAG_DEBUG,
         auth_mechanism => DEFAULT_AUTH_MECHANISM,
         is_connected   => 0,
@@ -154,12 +156,16 @@ sub close {
 }
 
 sub set_queue {
-    my ( $self, $queue_name ) = @_;
+    my ( $self, $queue_name, $queue_args ) = @_;
 
     return unless $queue_name;
 
     $self->{debug} and print "Setting queue to $queue_name\n";
-    my $queue_opts = _queue_properties();
+    my $queue_opts = Net::AMQP::Haiku::Helpers::def_queue_properties();
+    if ( defined($queue_args) and UNIVERSAL::isa( $queue_args, 'HASH' ) ) {
+        $queue_opts = { %{$queue_opts}, %{$queue_args} };
+    }
+
     $queue_opts->{queue} = $queue_name;
     my $amqp_queue
         = Net::AMQP::Protocol::Queue::Declare->new( %{$queue_opts} );
@@ -178,52 +184,70 @@ sub set_queue {
             . Dumper($resp_set_queue) . "\n";
         return 0;
     }
+    $self->{queue} = $queue_name;
     return 1;
 }
 
 sub send {
-    my ( $self, $msg ) = @_;
+    my ( $self, $msg, $queue_name, $publish_args ) = @_;
 
     return unless $msg;
 
-    my $payload = serialize($msg);
-    $self->{debug} and print "Sending payload " . Dumper($payload) . "\n";
-    $self->_send($payload);
+    $queue_name ||= $self->{queue};
+    $publish_args
+        ||= { reply_to => $self->{queue}, routing_key => $self->{queue} };
+    my $header_args;
+    my ( $pub_frame, $frame_header, $send_payload )
+        = serialize( $msg, $self->{username}, $publish_args, $header_args )
+        or return;
+    $self->{debug}
+        and print "Sending payload " . Dumper($send_payload) . "\n";
+    $self->_send_frames($pub_frame)    or return;
+    $self->_send_frames($frame_header) or return;
+    $self->_send_frames($send_payload) or return;
     return 1;
 }
 
 sub receive {
-    my ($self) = @_;
+    my ( $self, $queue_name, $ticket, $args ) = @_;
 
-    $self->_send_frames(make_get_header());
-    
+    return unless $queue_name;
+    $args   ||= {};
+    $ticket ||= DEFAULT_TICKET;
+
+    my $get_frame = make_get_header( $queue_name, $ticket, $args );
+    $self->_send_frames($get_frame);
+
     my ($get_resp) = $self->_recv_frames() or return;
-    
-    if (!$get_resp->method_frame->isa('Net::AMQP::Protocol::Basic::GetOk')) {
-        return;
+
+    if ( !$get_resp->method_frame->isa('Net::AMQP::Protocol::Basic::GetOk') )
+    {
+        my $ret_resp = (
+            (   $get_resp->method_frame->isa(
+                    'Net::AMQP::Protocol::Basic::GetEmpty') ) ? '' : undef );
+        return $ret_resp;
     }
-    
-    my ($msg_hdr) = $self->_read_frames();
-    my $tmp_len = 0;
+
+    my ($msg_hdr)  = $self->_recv_frames();
+    my $tmp_len    = 0;
     my @msg_frames = ();
-    while ($tmp_len < $msg_hdr->body_size()) {
-        my ($raw_body) = $self->_read_frames();
-        $tmp_len += length($raw_body->payload);
-        push (@msg_frames, $raw_body);
-    }
-    my @frames = $self->_recv_frames() or return;
-
-    my $mesg;
-    for my $frame (@frames) {
-        $mesg .= $frame->payload();
+    while ( $tmp_len < $msg_hdr->body_size() ) {
+        my ($raw_body) = $self->_recv_frames();
+        $tmp_len += length( $raw_body->payload );
+        push( @msg_frames, $raw_body );
     }
 
-    return $mesg;
+    my $body_mesg;
+    for my $frame (@msg_frames) {
+        $body_mesg .= $frame->payload();
+    }
+
+    return $body_mesg;
 }
 
 sub get {
-    my ($self) = @_;
-    return $self->receive();
+    my ( $self, $queue_name ) = @_;
+    return $self->receive($queue_name);
 }
 
 sub consume {
@@ -300,6 +324,8 @@ sub _send {
         $@ = $err;
         $self->{is_connected} = 0;
         print STDERR $@ . "\n";
+        $self->{debug}
+            and print "Payload data was:\n" . Dumper($payload) . "\n";
     };
     return 0 if ($@);
     return 1;
@@ -389,47 +415,6 @@ sub _read_socket {
     return;
 }
 
-#sub _serialize {
-#    my ( $self, $data, $channel, $args, $header_args, $mandatory, $immediate,
-#        $ticket )
-#        = @_;
-#
-#    $channel = $self->{channel} if ( !defined($channel) );
-#    my $ser_frame = Net::AMQP::Protocol::Basic::Publish->new(
-#        exchange  => $self->{exchange},
-#        mandatory => $mandatory,
-#        immediate => $immediate,
-#        %{$args},
-#        ticket => $ticket, );
-#
-#    my $frame_hdr = Net::AMQP::Protocol::Basic::ContentHeader->new(
-#        content_type     => 'application/octet-stream',
-#        content_encoding => undef,
-#        headers          => {},
-#        delivery_mode    => 1,
-#        priority         => 1,
-#        correlation_id   => 1234,
-#        expiration       => undef,
-#        message_id       => undef,
-#        timestamp        => time,
-#        type             => undef,
-#        user_id          => $self->{user_name},
-#        app_id           => undef,
-#        cluster_id       => undef,
-#        %{$header_args}, );
-#
-#    my $frame_bdy = Net::AMQP::Frame::Body->new( payload => $data );
-#    my $frame_pub = $ser_frame->frame_wrap();
-#    $frame_pub->channel( $self->{channel} );
-#    $frame_hdr->channel( $self->{channel} );
-#    $frame_bdy->channel( $self->{channel} );
-#
-#    return
-#          $frame_pub->to_raw_frame()
-#        . $frame_hdr->to_raw_frame()
-#        . $frame_bdy->to_raw_frame();
-#}
-
 sub _load_spec_file {
     my ( $self, $spec_file ) = @_;
     if ( !defined($spec_file) ) {
@@ -463,21 +448,6 @@ sub _client_properties {
         platform => CLIENT_PLATFORM,
         product  => $NAME,
         version  => $VERSION,
-    };
-}
-
-sub _queue_properties {
-
-    return {
-        ticket       => 0,
-        exclusive    => 0,
-        queue        => DEFAULT_QUEUE,
-        consumer_tag => DEFAULT_CONSUMER_TAG,
-        passive      => 0,
-        durable      => 0,
-        auto_delete  => 0,
-        no_ack       => 1,
-        nowait       => 0,
     };
 }
 
@@ -580,11 +550,15 @@ sub _connect_handshake {
             . Dumper($resp_shake);
     }
 
+    @{ $self->{tuning_parameters} }{ keys %{ $resp_shake->method_frame } }
+        = values( %{ $resp_shake->method_frame } );
+    $self->{debug}
+        and print "tuning parameters:\n"
+        . Dumper $self->{tuning_parameters} . "\n";
+
     # send tuning params
     my $tune_frame = Net::AMQP::Protocol::Connection::TuneOk->new(
-        channel_max => $resp_shake->method_frame->channel_max,
-        frame_max   => $resp_shake->method_frame->frame_max,
-        heartbeat   => $resp_shake->method_frame->heartbeat, );
+        %{ $self->{tuning_parameters} } );
 
     $self->{debug} and print "Tune frame: " . Dumper($tune_frame) . "\n";
     $self->_send_frames( $tune_frame, HANDSHAKE_CHANNEL ) or return;
