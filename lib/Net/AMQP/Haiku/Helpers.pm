@@ -5,56 +5,65 @@ require Exporter;
 our @ISA    = qw(Exporter);
 our @EXPORT = qw(deserialize serialize make_get_header def_queue_properties
     def_publish_properties);
-
+use Data::Dumper qw(Dumper);
 use Net::AMQP;
-use Net::AMQP::Protocol::v0_8;
 use Net::AMQP::Haiku::Constants;
 
 sub deserialize {
     my ($data) = @_;
     return unless $data;
-
     return Net::AMQP->parse_raw_frames( \$data );
 }
 
 sub serialize {
-    my ( $raw_msg, $user_name, $cust_pub_args, $header_args ) = @_;
+    my ( $raw_msg, $user_name, $custom_args ) = @_;
 
     return unless ( $raw_msg && $user_name );
 
-    my $pub_args = def_publish_properties();
-    if ( defined($cust_pub_args)
-        and UNIVERSAL::isa( $cust_pub_args, 'HASH' ) )
+    my $pub_args       = def_publish_properties();
+    my $header_args    = def_publish_header_properties();
+    my $default_weight = $custom_args->{weight} || DEFAULT_PUBLISH_WEIGHT;
+    if ( defined($custom_args)
+        and UNIVERSAL::isa( $custom_args, 'HASH' ) )
     {
-        $pub_args = { %{$pub_args}, %{$cust_pub_args} };
+        map {
+            $pub_args->{$_} = $custom_args->{$_}
+                if ( exists( $custom_args->{$_} ) )
+        } @PUBLISH_FRAME_ATTRS;
+        map {
+            $header_args->{$_} = $custom_args->{$_}
+                if ( exists( $custom_args->{$_} ) )
+        } @HEADER_FRAME_ATTRS;
     }
 
     my $pub_frame = Net::AMQP::Protocol::Basic::Publish->new( %{$pub_args} )
         or return;
 
     my $frame_hdr = Net::AMQP::Frame::Header->new(
-        weight => $header_args->{weight} || DEFAULT_PUBLISH_WEIGHT,
+        weight       => $default_weight,
         body_size    => length($raw_msg),
         header_frame => Net::AMQP::Protocol::Basic::ContentHeader->new(
             content_type     => 'application/octet-stream',
-            content_encoding => '',
-            headers          => {},
-            delivery_mode    => FLAG_DELIVERY,
-            priority         => FLAG_PRIORITY,
-            correlation_id   => DEFAULT_CORRELATION_ID,
-            expiration       => undef,
-            message_id       => undef,
-            timestamp        => time,
-            type             => undef,
-            user_id          => $user_name,
-            app_id           => undef,
-            cluster_id       => undef, ), ) or return;
+            content_encoding => $custom_args->{content_encoding} || undef,
+            headers          => $header_args,
+            delivery_mode => $custom_args->{delivery_mode} || FLAG_DELIVERY,
+            priority => $custom_args->{priority} || FLAG_PRIORITY,
+            correlation_id => undef,
+            expiration     => $custom_args->{expiration} || undef,
+            message_id     => $custom_args->{message_id} || undef,
+            timestamp      => time,
+            type           => $custom_args->{type} || undef,
+            user_id        => $user_name,
+            app_id         => $custom_args->{app_id} || undef,
+            cluster_id     => $custom_args->{cluster_id} || undef, ),
+    ) or return;
 
-    my $frame_body = Net::AMQP::Frame::Body->new( payload => $raw_msg )
+    my $frame_chunks = [];
+    @{$frame_chunks}
+        = _chop_frames( $raw_msg, $custom_args->{max_frame_size} )
         or return;
-    $pub_frame = $pub_frame->frame_wrap();
 
-    return ( $pub_frame, $frame_hdr, $frame_body );
+    return ( $pub_frame, $frame_hdr, $frame_chunks );
 }
 
 sub make_get_header {
@@ -73,22 +82,19 @@ sub make_get_header {
 }
 
 sub def_queue_properties {
-
     return {
-        ticket       => DEFAULT_TICKET,
-        exclusive    => 0,
-        queue        => DEFAULT_QUEUE,
-        consumer_tag => DEFAULT_CONSUMER_TAG,
-        passive      => 0,
-        durable      => 0,
-        auto_delete  => 0,
-        no_ack       => 1,
-        nowait       => 0,
+        auto_delete => FLAG_AUTO_DELETE,
+        no_ack      => FLAG_NO_ACK,
+        nowait      => FLAG_NO_WAIT,
+        durable     => FLAG_DURABLE,
+        queue       => DEFAULT_QUEUE,
+        passive     => FLAG_PASSIVE,
+        ticket      => DEFAULT_TICKET,
+        exclusive   => FLAG_EXCLUSIVE,
     };
 }
 
 sub def_publish_properties {
-
     return {
         routing_key => DEFAULT_QUEUE,
         exchange    => DEFAULT_EXCHANGE,
@@ -96,6 +102,19 @@ sub def_publish_properties {
         immediate   => FLAG_IMMEDIATE,
         ticket      => DEFAULT_TICKET,
     };
+}
+
+sub def_publish_header_properties {
+    return {
+        reply_to       => DEFAULT_QUEUE,
+        correlation_id => DEFAULT_CORRELATION_ID,
+    };
+}
+
+sub _chop_frames {
+    my ( $raw_msg, $max_frame_size ) = @_;
+    return unless $raw_msg && $max_frame_size;
+    return unpack '(a' . $max_frame_size . ')*', $raw_msg;
 }
 
 1;
