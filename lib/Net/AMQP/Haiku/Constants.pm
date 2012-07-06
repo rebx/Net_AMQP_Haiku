@@ -12,7 +12,7 @@ our @EXPORT = qw(DEFAULT_HOST DEFAULT_PROTO DEFAULT_PORT DEFAULT_VHOST
     DEFAULT_PUBLISH_WEIGHT FLAG_MANDATORY FLAG_IMMEDIATE FLAG_NO_ACK
     DEFAULT_CORRELATION_ID DEFAULT_CONSUMER_TAG FLAG_DELIVERY FLAG_PRIORITY
     DEFAULT_LOCALE FLAG_AUTO_DELETE FLAG_DURABLE FLAG_NO_WAIT FLAG_EXCLUSIVE
-    FLAG_PASSIVE @PUBLISH_FRAME_ATTRS @HEADER_FRAME_ATTRS);
+    FLAG_PASSIVE @PUBLISH_FRAME_ATTRS @HEADER_FRAME_ATTRS FLAG_NO_LOCAL);
 
 # SERVER stuff
 use constant DEFAULT_HOST           => '127.0.0.1';
@@ -44,8 +44,8 @@ use constant _HEADER_LENGTH => 7;
 use constant DEFAULT_TICKET         => 0;
 use constant DEFAULT_EXCHANGE       => '';
 use constant DEFAULT_PUBLISH_WEIGHT => 0;
-use constant FLAG_MANDATORY         => 0; # mandatory routing
-use constant FLAG_IMMEDIATE         => 0; # for flagging delivery
+use constant FLAG_MANDATORY         => 0;      # mandatory routing
+use constant FLAG_IMMEDIATE         => 0;      # for flagging delivery
 use constant FLAG_DELIVERY          => 1;
 use constant FLAG_PRIORITY          => 1;
 use constant FLAG_PASSIVE           => 0;
@@ -53,6 +53,7 @@ use constant FLAG_NO_ACK            => 1;
 use constant FLAG_EXCLUSIVE         => 0;
 use constant FLAG_DURABLE           => 0;
 use constant FLAG_NO_WAIT           => 0;
+use constant FLAG_NO_LOCAL          => 0;
 use constant FLAG_AUTO_DELETE       => 0;
 use constant DEFAULT_CONSUMER_TAG   => '';
 use constant DEFAULT_CORRELATION_ID => '1';
