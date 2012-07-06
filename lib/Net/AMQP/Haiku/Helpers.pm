@@ -3,16 +3,68 @@ package Net::AMQP::Haiku::Helpers;
 use strict;
 require Exporter;
 our @ISA    = qw(Exporter);
-our @EXPORT = qw(deserialize serialize make_get_header def_queue_properties
-    def_publish_properties);
+our @EXPORT = qw(deserialize serialize make_get_header
+    unpack_data_header unpack_data_body unpack_data_footer unpack_raw_data
+    );
+
 use Data::Dumper qw(Dumper);
 use Net::AMQP;
 use Net::AMQP::Haiku::Constants;
+use Net::AMQP::Haiku::Properties;
 
 sub deserialize {
     my ($data) = @_;
     return unless $data;
     return Net::AMQP->parse_raw_frames( \$data );
+}
+
+sub unpack_data_header {
+    my ($data) = @_;
+
+    return unless $data;
+
+    my $header = substr $data, 0, _HEADER_LENGTH, '';
+    return unless $header;
+    my ( $type_id, $channel, $size ) = unpack 'CnN', $header;
+
+    return ( $header, $size, $data, $type_id, $channel );
+}
+
+sub unpack_data_body {
+    my ( $data, $size ) = @_;
+
+    return unless $data && $size;
+
+    my $body = substr $data, 0, $size, '' or return;
+
+    return ( $body, $data );
+}
+
+sub unpack_data_footer {
+    my ($data) = @_;
+
+    # Read the footer and check the octet value
+    my $footer = substr $data, 0, _FOOTER_LENGTH, '';
+    my $footer_octet = unpack 'C', $footer;
+
+    # TEH FOOTER MUST EXISTETH!
+    if ( !defined($footer_octet) or ( $footer_octet != _FOOTER_OCT ) ) {
+        warn "Invalid footer: $footer_octet\n";
+        return;
+    }
+
+    return ( $footer, $data );
+}
+
+sub unpack_raw_data {
+    my ($resp_data) = @_;
+
+    my ( $header, $size, $body, $footer );
+    ( $header, $size, $resp_data ) = unpack_data_header($resp_data) or return;
+    ( $body, $resp_data ) = unpack_data_body( $resp_data, $size );
+    ( $footer, $resp_data ) = unpack_data_footer($resp_data) or return;
+
+    return ( $resp_data, $header, $body, $footer, $size );
 }
 
 sub serialize {
@@ -67,48 +119,16 @@ sub serialize {
 }
 
 sub make_get_header {
-    my ( $queue, $ticket, $extra_args ) = @_;
+    my ( $queue, $extra_args ) = @_;
 
     return unless $queue;
-    $ticket ||= DEFAULT_TICKET;
-    $extra_args ||= {};
+    $extra_args ||= { ticket => DEFAULT_TICKET };
 
     # in a synchronous world
     return Net::AMQP::Protocol::Basic::Get->new(
         no_ack => FLAG_NO_ACK,
         queue  => $queue,
-        ticket => $ticket,
         %{$extra_args}, );
-}
-
-sub def_queue_properties {
-    return {
-        auto_delete => FLAG_AUTO_DELETE,
-        no_ack      => FLAG_NO_ACK,
-        nowait      => FLAG_NO_WAIT,
-        durable     => FLAG_DURABLE,
-        queue       => DEFAULT_QUEUE,
-        passive     => FLAG_PASSIVE,
-        ticket      => DEFAULT_TICKET,
-        exclusive   => FLAG_EXCLUSIVE,
-    };
-}
-
-sub def_publish_properties {
-    return {
-        routing_key => DEFAULT_QUEUE,
-        exchange    => DEFAULT_EXCHANGE,
-        mandatory   => FLAG_MANDATORY,
-        immediate   => FLAG_IMMEDIATE,
-        ticket      => DEFAULT_TICKET,
-    };
-}
-
-sub def_publish_header_properties {
-    return {
-        reply_to       => DEFAULT_QUEUE,
-        correlation_id => DEFAULT_CORRELATION_ID,
-    };
 }
 
 sub _chop_frames {
