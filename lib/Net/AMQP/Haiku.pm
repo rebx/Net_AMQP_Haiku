@@ -22,6 +22,7 @@ use Net::AMQP;
 use IO::Socket;
 use Socket qw(IPPROTO_TCP TCP_NODELAY);
 use Net::AMQP::Haiku::Constants;
+use Net::AMQP::Haiku::Properties;
 use Net::AMQP::Haiku::Helpers;
 
 sub new {
@@ -46,6 +47,13 @@ sub new {
         send_retry     => SEND_RETRY,
         recv_retry     => RECV_RETRY,
         correlation_id => DEFAULT_CORRELATION_ID,
+        nowait         => FLAG_NO_WAIT,
+        auto_delete    => FLAG_AUTO_DELETE,
+        durable        => FLAG_DURABLE,
+        mandatory      => FLAG_MANDATORY,
+        immediate      => FLAG_IMMEDIATE,
+        consumer_tag   => DEFAULT_CONSUMER_TAG,
+        no_ack         => FLAG_NO_ACK,
     };
     bless( $self, $class );
     if (@_) {
@@ -83,6 +91,15 @@ sub auth_mechanism {
             "Unable to set authentication mechanism to $auth_mechanism";
     }
     return ( $self->{auth_mechanism} );
+}
+
+sub debug {
+    my ( $self, $debug_flag ) = @_;
+
+    if ( defined($debug_flag) ) {
+        $self->{debug} = $debug_flag;
+    }
+    return ( $self->{debug} );
 }
 ###Attributes###
 
@@ -232,17 +249,19 @@ sub send {
 }
 
 sub receive {
-    my ( $self, $queue_name, $ticket, $args ) = @_;
+    my ( $self, $queue_name, $recv_args ) = @_;
 
     return unless $queue_name;
-    $args   ||= {};
-    $ticket ||= DEFAULT_TICKET;
 
-    my $get_frame = make_get_header( $queue_name, $ticket, $args );
+    my $get_frame = make_get_header( $queue_name, $recv_args );
     $self->{debug} and print "Get frame:\n" . Dumper($get_frame) . "\n";
     $self->_send_frames($get_frame) or return;
+    my ( $get_resp_frame, $get_resp_raw ) = $self->_recv() or return;
 
-    my ($get_resp) = $self->_recv_frames() or return;
+    my ( $resp_data, $header, $body, $footer, $size )
+        = unpack_raw_data($get_resp_raw);
+
+    my ($get_resp) = deserialize($get_resp_frame) or return;
 
     if ( !$get_resp->method_frame->isa('Net::AMQP::Protocol::Basic::GetOk') )
     {
@@ -251,10 +270,9 @@ sub receive {
                     'Net::AMQP::Protocol::Basic::GetEmpty') ) ? '' : undef );
         return $ret_resp;
     }
-    $self->{debug}
-        and print "Got Basick::GetOk back. \n" . Dumper($get_resp) . "\n";
 
-    return 1;
+    my ($queue_msg) = ( unpack_raw_data($resp_data) )[2];
+    return $queue_msg;
 }
 
 sub get {
@@ -262,13 +280,77 @@ sub get {
     return $self->receive(@_);
 }
 
-sub consume {
+sub bind_queue {
+    my ( $self, $queue_name, $cust_bind_args ) = @_;
 
+    return unless $queue_name;
+
+    $cust_bind_args ||= {
+        queue       => $queue_name,
+        exchange    => $self->{exchange},
+        routing_key => $queue_name,
+    };
+
+    my $bind_args = { %{ def_queue_bind_properties() }, %{$cust_bind_args} };
+
+    my $bind_queue_frame
+        = Net::AMQP::Protocol::Queue::Bind->new( %{$bind_args} );
+
+    $self->_send_frames($bind_queue_frame) or return;
+
+    my ($bind_resp) = $self->_recv_frames() or return;
+
+    $self->{debug}
+        and print "Got bind response:\n" . Dumper($bind_resp) . "\n";
+
+    if (!$bind_resp->method_frame->isa('Net::AMQP::Protocol::Queue::BindOk') )
+    {
+        warn "Unable to bind to queue $queue_name: "
+            . $bind_resp->method_frame->{reply_text};
+        if ($bind_resp->method_frame->isa(
+                'Net::AMQP::Protocol::Channel::Close') )
+        {
+            $self->close();
+        }
+        return;
+    }
+    $self->{debug} and print "Bound to queue $queue_name\n";
+    return 1;
+}
+
+sub consume {
+    my ( $self, $nom_args ) = @_;
+
+    $nom_args ||= {
+        ticket       => $self->{ticket},
+        queue        => $self->{queue},
+        consumer_tag => $self->{consumer_tag},
+        no_local     => $self->{no_local},
+        no_ack       => $self->{no_ack},
+        exclusive    => $self->{exclusive},
+        nowait       => $self->{nowait},
+    };
+
+    $nom_args = { %{ def_consume_properties() }, %{$nom_args} };
+
+    my $nom_frame = Net::AMQP::Protocol::Basic::Consume( %{$nom_args} );
+
+    $self->_send_frames($nom_frame) or return;
+    my ($nom_resp) = $self->_recv_frames() or return;
+    $self->{debug}
+        and print "Got consume response:\n" . Dumper($nom_resp) . "\n";
+    if (!$nom_resp->method_frame->isa(
+            'Net::AMQP::Protocol::Basic::ConsumeOk') )
+    {
+        warn "Unable to consume from queue $nom_args->{queue}";
+        return;
+    }
+    return 1;
 }
 
 sub nom {
-    my ($self) = @_;
-    return $self->consume();
+    my $self = shift;
+    return $self->consume(@_);
 }
 
 sub DESTROY {
@@ -297,7 +379,7 @@ sub _send_frames {
 sub _recv_frames {
     my ($self) = @_;
 
-    my $frame = $self->_recv() or return;
+    my ($frame) = $self->_recv() or return;
     return deserialize($frame);
 }
 
@@ -346,33 +428,17 @@ sub _send {
 sub _recv {
     my ($self) = @_;
 
-    local $@;
-    try {
-        setsockopt( $self->{connection}, SOL_SOCKET, SO_RCVTIMEO,
-            pack( 'L!L!', $self->{timeout}, 0 ) )
-            or die
-            "Unable to set socket receive timeout to $self->{timeout}: $!\n";
-    }
-    catch {
-        my $err = $_;
-        chomp($err);
-        $@ = $err;
-    };
-    carp $@ if ($@);
+    $self->_set_recv_timeout();
 
     my ( $data, $data_len ) = $self->_read_socket(DEFAULT_RECV_LEN);
 
     unless ($data) {
         $data = $self->_read_socket(DEFAULT_RECV_LEN) or return;
     }
+    my ( $header, $body, $footer, $size );
 
-    # get the header
-    my $header = substr $data, 0, _HEADER_LENGTH, '';
-    return unless $header;
-    my ( $type_id, $channel, $size ) = unpack 'CnN', $header;
-
-    # Read the body
-    my $body = substr $data, 0, $size, '';
+    ( $header, $size, $data ) = unpack_data_header($data) or return;
+    ( $body, $data ) = unpack_data_body( $data, $size ) or return;
 
     # Do we have more to read?
     if ( length $body < $size || length $data == 0 ) {
@@ -382,18 +448,39 @@ sub _recv {
             $size_remaining -= length $chunk;
             $data .= $chunk;
         }
-        $body .= substr( $data, 0, $size - length($body), '' );
+        my ($tmp_bod) = unpack_data_body( $data, $size - length($body) )
+            or return;
+        $body .= $tmp_bod;
+    }
+    ( $footer, $data ) = unpack_data_footer($data) or return;
+
+    my $full_msg = $header . $body . $footer;
+    return ( $full_msg, $data );
+}
+
+sub _set_recv_timeout {
+    my ( $self, $recv_timeout ) = @_;
+
+    $recv_timeout ||= $self->{timeout};
+
+    local $@;
+    try {
+        setsockopt( $self->{connection}, SOL_SOCKET, SO_RCVTIMEO,
+            pack( 'L!L!', $recv_timeout, 0 ) )
+            or die
+            "Unable to set socket receive timeout to $self->{timeout}: $!\n";
+    }
+    catch {
+        my $err = $_;
+        chomp($err);
+        $@ = $err;
+    };
+    if ($@) {
+        warn $@;
+        return 0;
     }
 
-    # Read the footer and check the octet value
-    my $footer = substr $data, 0, _FOOTER_LENGTH, '';
-    my $footer_octet = unpack 'C', $footer;
-
-    # TEH FOOTER MUST EXISTETH!
-    carp "Invalid footer: $footer_octet\n"
-        unless $footer_octet == _FOOTER_OCT;
-    my $full_msg = $header . $body . $footer;
-    return $full_msg;
+    return 1;
 }
 
 sub _read_socket {
@@ -669,11 +756,11 @@ VERSION
 
 Other useful references:
 
-=item Eric Waters' Net::AMQP Module
+=item Net::AMQP
 
 http://search.cpan.org/dist/Net-AMQP/lib/Net/AMQP.pm
 
-=item norbu09's Net::AMQP::Simple
+=item Net::AMQP::Simple
 
 https://github.com/norbu09/Net_AMQP_Simple
 
