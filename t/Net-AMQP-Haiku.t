@@ -1,5 +1,3 @@
-# Before `make install' is performed this script should be runnable with
-# `make test'. After `make install' it should work as `perl Net-AMQP-Haiku.t'
 
 #########################
 
@@ -59,8 +57,11 @@ ok( $f->open_channel(),    "test open channel" );
 ok( $f->set_queue($queue), "test set queue to $queue" );
 is ($f->{queue}, $queue, "test queue attribute is set to $queue");
 ok( $f->send($msg_send), "test send message to server" );
-#ok( $msg_recv = $f->get($queue), "Test get message on queue $queue" );
-#is( $msg_recv, $msg_send, "Test got the ping message $msg_send" );
+ok( $msg_recv = $f->receive($queue), "Test get message on queue $queue" );
+is( "$msg_recv", "$msg_send", "Test got the ping message $msg_send" );
+#ok( $f->bind_queue($queue), "Test bind to queue $queue" );
+#ok( $f->consume( { queue => $queue } ), "Test consume to $queue" );
+
 #ok( $f->close(), "test close connection" );
 
 #done_testing();
