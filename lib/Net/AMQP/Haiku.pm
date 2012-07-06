@@ -15,10 +15,6 @@ use Try::Tiny;
 use Carp qw(carp croak confess);
 use Data::Dumper qw(Dumper);
 use Net::AMQP;
-
-#use Net::AMQP::Protocol;
-#use Net::AMQP::Common qw(:all);
-#use Net::AMQP::Protocol::v0_8;
 use IO::Socket;
 use Socket qw(IPPROTO_TCP TCP_NODELAY);
 use Net::AMQP::Haiku::Constants;
