@@ -1,16 +1,29 @@
 Net-AMQP-Haiku version 0.01
 ===========================
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+A Simple Perl Module using Net::AMQP. 
 
-A README file is required for CPAN modules since CPAN extracts the
-README file from a module distribution so that people browsing the
-archive can use it get an idea of the modules uses. It is usually a
-good idea to provide version information here so that people can
-decide whether fixes for the module are worth downloading.
+This module is designed to be as simple as possible -- this module
+shall only require Net::AMQP to run, and be compatible from Perl
+version 5.8.8 and up.
+
+USAGE
+
+use Net::AMQP::Haiku;
+my $amqp = Net::AMQP::Haiku->new({
+    host=> 'localhost',
+    spec_file => '/path/to/spec/file/amqp'
+  });
+$amqp->open_channel();
+$amqp->set_queue('foo');
+$amqp->send("ohai!");
+print $amqp->receive();
+
+DEPENDENCIES
+
+This module requires only this module:
+
+  Net::AMQP
 
 INSTALLATION
 
@@ -21,15 +34,9 @@ To install this module type the following:
    make test
    make install
 
-DEPENDENCIES
-
-This module requires these other modules and libraries:
-
-  blah blah blah
-
 COPYRIGHT AND LICENCE
 
-Put the correct copyright and licence information here.
+The module shall follow the same licensing scheme as Net::AMQP.
 
 Copyright (C) 2012 by Rebs Guarina
 
