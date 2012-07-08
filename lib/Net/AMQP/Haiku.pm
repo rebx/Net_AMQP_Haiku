@@ -247,8 +247,11 @@ sub send {
 sub receive {
     my ( $self, $queue_name, $recv_args ) = @_;
 
-    return unless $queue_name;
-
+    $queue_name ||= $self->{queue};
+    if ( !defined($queue_name) ) {
+        warn "No queue specified";
+        return;
+    }
     my $get_frame = make_get_header( $queue_name, $recv_args );
     $self->{debug} and print "Get frame:\n" . Dumper($get_frame) . "\n";
     $self->_send_frames($get_frame) or return;
@@ -360,6 +363,11 @@ sub DESTROY {
 ###Private Methods###
 sub _send_frames {
     my ( $self, $frame, $chan_id ) = @_;
+
+    unless ($frame) {
+        warn '' . ( caller(0) )[3] . ": No frame to send";
+        return;
+    }
 
     $chan_id = $self->{channel} if ( !defined($chan_id) );
     $self->{debug} and print "Sending frame to channel $chan_id\n";
@@ -728,13 +736,14 @@ Net::AMQP::Haiku - A simple Perl extension for AMQP.
 =head1 SYNOPSIS
 
   use Net::AMQP::Haiku;
-  $amqp = Net::AMQP::Haiku->new({
+  my $amqp = Net::AMQP::Haiku->new({
     host=> 'localhost',
-    spec_file => '/path/to/spec/file/amqp
+    spec_file => '/path/to/spec/file/amqp'
   });
   $amqp->open_channel();
+  $amqp->set_queue('foo');
   $amqp->send("ohai!");
-  $amqp->close();
+  print $amqp->receive();
 
 =head1 DESCRIPTION
 
