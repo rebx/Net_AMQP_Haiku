@@ -78,4 +78,13 @@ sub def_consume_properties {
     };
 }
 
+sub def_queue_delete_properties {
+    return {
+        ticket    => DEFAULT_TICKET,
+        if_unused => FLAG_IF_UNUSED,
+        if_empty  => FLAG_IF_EMPTY,
+        nowait    => FLAG_NO_WAIT,
+    };
+}
+
 1;
