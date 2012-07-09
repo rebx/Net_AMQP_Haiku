@@ -140,7 +140,24 @@ sub make_get_header {
 sub _chop_frames {
     my ( $raw_msg, $max_frame_size ) = @_;
     return unless $raw_msg && $max_frame_size;
-    return unpack '(a' . $max_frame_size . ')*', $raw_msg;
+    return unpack( "(a" . $max_frame_size . ")*", $raw_msg);
+}
+
+sub check_exchange_type {
+    my ($exchange_type) = @_;
+
+    if ( !defined($exchange_type) ) {
+        warn "The exchange type must be explicitly defined";
+        return;
+    }
+    if ( !exists( $EXCHANGE_TYPES->{$exchange_type} ) ) {
+        warn "Invalid exchange type \'"
+            . $exchange_type
+            . "\'. It must be either of\n"
+            . join( "\n", keys( %{$EXCHANGE_TYPES} ) ) . "\n";
+        return;
+    }
+    return 1;
 }
 
 1;
