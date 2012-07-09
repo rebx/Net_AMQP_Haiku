@@ -3,5 +3,12 @@ Makefile.PL
 MANIFEST
 net-amqp-haiku.komodoproject
 README
-t/Net-AMQP-Haiku.t
+t/amqp0-8.xml
+t/test_basic_publish.t
+t/test_conf.yaml
+t/test_basic_bind.t
+t/test_basic_produce.t
 lib/Net/AMQP/Haiku.pm
+lib/Net/AMQP/Haiku/Constants.pm
+lib/Net/AMQP/Haiku/Properties.pm
+lib/Net/AMQP/Haiku/Helpers.pm
