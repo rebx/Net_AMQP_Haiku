@@ -3,7 +3,7 @@
 
 use strict;
 use File::Spec;
-use Test::More 'tests' => 6;
+use Test::More 'tests' => 7;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name = 'Net::AMQP::Haiku';
@@ -39,4 +39,5 @@ ok( $p->bind_queue(
             routing_key => $routing_key
         } ),
     "Test bind to queue $queue" );
+ok( $p->close(), "test close connection properly" );
 done_testing();
