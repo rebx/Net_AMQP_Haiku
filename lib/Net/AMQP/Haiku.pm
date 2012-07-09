@@ -33,7 +33,8 @@ sub new {
         locale         => DEFAULT_LOCALE,
         queue          => DEFAULT_QUEUE,
         channel        => DEFAULT_CHANNEL,
-        exchange       => DEFAULT_EXCHANGE,
+        exchange_name  => DEFAULT_EXCHANGE_NAME,
+        exchange_type  => DEFAULT_EXCHANGE_TYPE,
         routing_key    => DEFAULT_QUEUE,
         debug          => FLAG_DEBUG,
         auth_mechanism => DEFAULT_AUTH_MECHANISM,
@@ -181,6 +182,7 @@ sub set_queue {
 
     return unless $queue_name;
 
+    $self->connect() if ( !$self->{is_connected} );
     $self->{debug} and print "Setting queue to $queue_name\n";
 
     my $queue_opts = def_queue_properties();
@@ -206,6 +208,34 @@ sub set_queue {
         return 0;
     }
     $self->{queue} = $queue_name;
+    return 1;
+}
+
+sub set_exchange {
+    my ( $self, $exchange_name, $exchange_args ) = @_;
+
+    return unless $exchange_name;
+    $exchange_name ||= $self->{exchange_name};
+    $exchange_args ||= {
+        exchange => $exchange_name,
+        type     => DEFAULT_EXCHANGE_TYPE
+    };
+    my $def_exchange_args = def_exchange_properties();
+    $exchange_args = { %{$def_exchange_args}, %{$exchange_args} };
+
+    my $exchange_frame
+        = Net::AMQP::Protocol::Exchange::Declare->new( %{$exchange_args} );
+    $self->_send_frames($exchange_frame) or return;
+
+    my $exchange_resp = $self->_recv_frames() or return;
+
+    if (!$exchange_resp->method_frame->isa(
+            'Net::AMQP::Protocol::Exchange::DeclareOk') )
+    {
+        warn "Unable to set exchange as $exchange_name";
+        return 0;
+    }
+    $self->{debug} and print "Set the exchange as $exchange_name\n";
     return 1;
 }
 
@@ -286,7 +316,7 @@ sub bind_queue {
 
     $cust_bind_args ||= {
         queue       => $queue_name,
-        exchange    => $self->{exchange},
+        exchange    => $self->{exchange_name},
         routing_key => $queue_name,
     };
 
@@ -755,6 +785,40 @@ Perl version 5.8.8.
 
 NAME
 VERSION
+
+=head2 PUBLIC METHODS
+
+=item new
+
+    Creates a new instance of the Net::AMQP::Haiku Object
+    
+    At a minimum, it expects the host name, and path to the AMQP spec file
+    
+    A list of configurable options are as follows:
+    
+    host            - the name of the AMQP server
+    proto           - the protocol used
+    port            - the port to connect to
+    vhost           - the name of the virtual host
+    username        - the name of the user to authenticate to the server as
+    password        - the corresponding password
+    locale          - locale that the client wants to use
+    channel         - the channel id to use
+    auth_mechanism  - the authentication mechanism that will be used
+                        by the client
+    spec_file       - the path to the spec file to use
+    debug           - debugging flag
+    timeout         - connection timeout for establishing initial socket
+    
+    Note that queue, exchange, exchange_type, routing_key should be set
+    using their corresponding methods.
+    
+    The method is expected to die if it doesn't find the spec file on the path
+    given. 
+    
+    This method returns the new instance of the Net::AMQP::Haiku object
+    
+=cut
 
 
 =head1 SEE ALSO
