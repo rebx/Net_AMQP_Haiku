@@ -158,22 +158,38 @@ sub close_channel {
     return 1;
 }
 
+sub close_connection {
+    my ($self) = @_;
+
+    my $close_frame = Net::AMQP::Protocol::Connection::Close->new();
+    $self->_send_frames( $close_frame, HANDSHAKE_CHANNEL );
+
+    my ($close_resp) = $self->_recv_frames();
+
+    return 0
+        if (
+        !$self->_check_frame_response(
+            $close_resp, 'Net::AMQP::Protocol::Connection::CloseOk' ) );
+    return 1;
+}
+
 sub close {
     my ($self) = @_;
 
     return 1 if ( !$self->{is_connected} );
     local $@;
     try {
-        $self->close_channel( $self->{channel} );
-        close( $self->{connection} )
-            or die "Unable to close socket connection properly: $!\n";
+        $self->close_connection()
+            or die "Unable to send Connection::Close frame properly\n";
     }
     catch {
         my $err = $_;
         chomp($err);
         $@ = $err;
+        # nobody cares?
+        warn $@ if ( $@ and $self->{debug} );
     };
-    warn $@ if ($@);
+    return 0 if ($@);
     return 1;
 }
 
@@ -220,17 +236,22 @@ sub set_exchange {
         exchange => $exchange_name,
         type     => DEFAULT_EXCHANGE_TYPE
     };
+    $exchange_args->{exchange} = $exchange_name
+        if ( !exists( $exchange_args->{exchange} ) );
     my $def_exchange_args = def_exchange_properties();
     $exchange_args = { %{$def_exchange_args}, %{$exchange_args} };
+
+    Net::AMQP::Haiku::Helpers::check_exchange_type( $exchange_args->{type} )
+        or return;
 
     my $exchange_frame
         = Net::AMQP::Protocol::Exchange::Declare->new( %{$exchange_args} );
     $self->_send_frames($exchange_frame) or return;
 
-    my $exchange_resp = $self->_recv_frames() or return;
+    my ($exchange_resp) = $self->_recv_frames() or return;
 
-    if (!$exchange_resp->method_frame->isa(
-            'Net::AMQP::Protocol::Exchange::DeclareOk') )
+    if (!$self->_check_frame_response(
+            $exchange_resp, 'Net::AMQP::Protocol::Exchange::DeclareOk' ) )
     {
         warn "Unable to set exchange as $exchange_name";
         return 0;
@@ -250,8 +271,8 @@ sub send {
         reply_to       => $queue_name,
         correlation_id => DEFAULT_CORRELATION_ID,
         channel        => $self->{channel},
-        max_frame_size => $self->{tuning_parameters}->{frame_max},
     };
+    $publish_args->{max_frame_size} = $self->{tuning_parameters}->{frame_max};
 
     my ( $pub_frame, $frame_header, $send_payload )
         = serialize( $msg, $self->{username}, $publish_args )
@@ -310,17 +331,29 @@ sub get {
 }
 
 sub bind_queue {
-    my ( $self, $queue_name, $cust_bind_args ) = @_;
+    my ( $self, $cust_bind_args ) = @_;
 
-    return unless $queue_name;
+    my $queue_name = (
+        ( defined( $cust_bind_args->{queue} ) )
+        ? $cust_bind_args->{queue}
+        : $self->{queue} );
 
-    $cust_bind_args ||= {
-        queue       => $queue_name,
-        exchange    => $self->{exchange_name},
-        routing_key => $queue_name,
-    };
+    unless ($queue_name) {
+        warn "No queue has been named";
+        return;
+    }
 
-    my $bind_args = { %{ def_queue_bind_properties() }, %{$cust_bind_args} };
+    $cust_bind_args ||= {};
+
+    $cust_bind_args->{queue} = $queue_name
+        if ( !exists( $cust_bind_args->{queue} ) );
+    $cust_bind_args->{routing_key} = $queue_name
+        if ( !exists( $cust_bind_args->{routing_key} ) );
+    $cust_bind_args->{exchange} = $queue_name
+        if ( !exists( $cust_bind_args->{exchange} ) );
+
+    my $def_bind_args = def_queue_bind_properties();
+    my $bind_args = { %{$def_bind_args}, %{$cust_bind_args} };
 
     my $bind_queue_frame
         = Net::AMQP::Protocol::Queue::Bind->new( %{$bind_args} );
@@ -334,13 +367,11 @@ sub bind_queue {
 
     if (!$bind_resp->method_frame->isa('Net::AMQP::Protocol::Queue::BindOk') )
     {
-        warn "Unable to bind to queue $queue_name: "
+        warn "Unable to bind to queue $queue_name using exchange "
+            . $bind_args->{exchange}
+            . " and routing key "
+            . $bind_args->{routing_key} . ": "
             . $bind_resp->method_frame->{reply_text};
-        if ($bind_resp->method_frame->isa(
-                'Net::AMQP::Protocol::Channel::Close') )
-        {
-            $self->close();
-        }
         return;
     }
     $self->{debug} and print "Bound to queue $queue_name\n";
@@ -348,21 +379,15 @@ sub bind_queue {
 }
 
 sub consume {
-    my ( $self, $nom_args ) = @_;
+    my ( $self, $cust_nom_args ) = @_;
 
-    $nom_args ||= {
-        ticket       => $self->{ticket},
-        queue        => $self->{queue},
-        consumer_tag => $self->{consumer_tag},
-        no_local     => $self->{no_local},
-        no_ack       => $self->{no_ack},
-        exclusive    => $self->{exclusive},
-        nowait       => $self->{nowait},
-    };
+    $cust_nom_args ||= {};
+    $cust_nom_args->{queue} ||= $self->{queue};
 
-    $nom_args = { %{ def_consume_properties() }, %{$nom_args} };
+    my $def_nom_args = def_consume_properties();
+    my $nom_args = { %{$def_nom_args}, %{$cust_nom_args} };
 
-    my $nom_frame = Net::AMQP::Protocol::Basic::Consume( %{$nom_args} );
+    my $nom_frame = Net::AMQP::Protocol::Basic::Consume->new( %{$nom_args} );
 
     $self->_send_frames($nom_frame) or return;
     my ($nom_resp) = $self->_recv_frames() or return;
@@ -546,6 +571,30 @@ sub _read_socket {
         return ( $payload, $data_len ) if ( !$@ );
     }
     return;
+}
+
+sub _check_frame_response {
+    my ( $self, $frame, $response ) = @_;
+
+    return unless $frame && $response;
+
+    if ( !UNIVERSAL::isa( $frame, 'Net::AMQP::Frame::Method' ) ) {
+        warn "Response frame is not a valid Net::AMQP::Frame::Method class:\n"
+            . Dumper($frame) . "\n";
+        return;
+    }
+
+    if ( $frame->method_frame->isa($response) ) {
+        $self->{debug}
+            and print "Response frame is of expected response "
+            . $response . "\n";
+        return 1;
+    }
+
+    $self->{debug}
+        and print "Frame is not of expected response $response\n"
+        . Dumper($frame) . "\n";
+    return 0;
 }
 
 sub _load_spec_file {
