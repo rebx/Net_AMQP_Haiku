@@ -3,4 +3,7 @@ host: localhost
 port: 5672
 debug: 0
 queue: foo
+exchange: bar
+exchange_type: direct
+routing_key: test
 
