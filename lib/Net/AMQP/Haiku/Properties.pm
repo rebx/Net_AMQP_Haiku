@@ -1,9 +1,13 @@
 package Net::AMQP::Haiku::Properties;
+
 use strict;
+use warnings;
+
 require Exporter;
 our @ISA    = qw(Exporter);
 our @EXPORT = qw(
-    def_queue_properties def_publish_properties def_queue_bind_properties
+    def_queue_properties def_publish_properties
+    def_queue_bind_properties def_exchange_properties
     def_consume_properties def_publish_header_properties
 );
 
@@ -25,7 +29,7 @@ sub def_queue_properties {
 sub def_publish_properties {
     return {
         routing_key => DEFAULT_QUEUE,
-        exchange    => DEFAULT_EXCHANGE,
+        exchange    => DEFAULT_EXCHANGE_NAME,
         mandatory   => FLAG_MANDATORY,
         immediate   => FLAG_IMMEDIATE,
         ticket      => DEFAULT_TICKET,
@@ -43,8 +47,21 @@ sub def_queue_bind_properties {
     return {
         ticket      => DEFAULT_TICKET,
         queue       => DEFAULT_QUEUE,
-        exchange    => DEFAULT_EXCHANGE,
+        exchange    => DEFAULT_EXCHANGE_NAME,
         routing_key => DEFAULT_QUEUE,
+        nowait      => FLAG_NO_WAIT,
+    };
+}
+
+sub def_exchange_properties {
+    return {
+        ticket      => DEFAULT_TICKET,
+        exchange    => DEFAULT_EXCHANGE_NAME,
+        type        => DEFAULT_EXCHANGE_TYPE,
+        passive     => FLAG_PASSIVE,
+        durable     => FLAG_DURABLE,
+        auto_delete => FLAG_AUTO_DELETE,
+        internal    => FLAG_INTERNAL,
         nowait      => FLAG_NO_WAIT,
     };
 }
