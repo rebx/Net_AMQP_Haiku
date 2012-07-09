@@ -186,6 +186,7 @@ sub close {
         my $err = $_;
         chomp($err);
         $@ = $err;
+
         # nobody cares?
         warn $@ if ( $@ and $self->{debug} );
     };
@@ -399,12 +400,70 @@ sub consume {
         warn "Unable to consume from queue $nom_args->{queue}";
         return;
     }
+    $self->{consumer_tag} = $nom_resp->method_frame->consumer_tag;
     return 1;
 }
 
 sub nom {
     my $self = shift;
     return $self->consume(@_);
+}
+
+sub delete {
+    my ( $self, $cust_delete_args ) = @_;
+
+    return unless $cust_delete_args;
+
+   # hard error. No code magic/automation. The user must explicitly state that
+    if ( !exists( $cust_delete_args->{queue} ) ) {
+        warn "No queue given to delete";
+        return;
+    }
+
+    my $def_delete_args
+        = Net::AMQP::Haiku::Properties::def_queue_delete_properties();
+    my $delete_args = { %{$def_delete_args}, %{$cust_delete_args} };
+    my $delete_queue_frame
+        = Net::AMQP::Protocol::Queue::Delete->new( %{$delete_args} );
+    $self->_send_frames($delete_queue_frame) or return;
+
+    my ($delete_queue_resp) = $self->_recv_frames() or return;
+
+    if (!$self->_check_frame_response(
+            $delete_queue_resp, 'Net::AMQP::Protocol::Queue::DeleteOk' ) )
+    {
+        warn
+            "The queue $delete_args->{queue} was not deleted. Response frame:\n"
+            . Dumper($delete_queue_resp) . "\n";
+        return 0;
+    }
+
+    $self->{debug}
+        and print "Queue $delete_args->{queue} has been deleted.\n";
+    return 1;
+}
+
+sub halt_consumption {
+    my ( $self, $consumer_tag ) = @_;
+
+    $consumer_tag ||= $self->{consumer_tag};
+    my $halt_consume_frame = Net::AMQP::Protocol::Basic::Cancel->new(
+        consumer_tag => $consumer_tag,
+        nowait       => $self->{nowait} );
+    $self->_send_frames($halt_consume_frame) or return;
+
+    my ($halt_consume_resp) = $self->_recv_frames() or return;
+    if (!$self->_check_frame_response(
+            $halt_consume_resp, 'Net::AMQP::Protocol::Basic::CancelOk' ) )
+    {
+        warn
+            "Unable to stop consumer on queue $self->{queue} with tag $consumer_tag";
+        return 0;
+    }
+    $self->{debug}
+        and print
+        "Consumer with tag $consumer_tag on $self->{queue} has stopped.\n";
+    return 1;
 }
 
 sub DESTROY {
