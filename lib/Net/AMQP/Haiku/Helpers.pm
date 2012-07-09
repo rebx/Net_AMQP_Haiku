@@ -1,11 +1,12 @@
 package Net::AMQP::Haiku::Helpers;
 
 use strict;
+use warnings;
 require Exporter;
 our @ISA    = qw(Exporter);
 our @EXPORT = qw(deserialize serialize make_get_header
     unpack_data_header unpack_data_body unpack_data_footer unpack_raw_data
-    );
+);
 
 use Data::Dumper qw(Dumper);
 use Net::AMQP;
@@ -48,7 +49,11 @@ sub unpack_data_footer {
     my $footer_octet = unpack 'C', $footer;
 
     # TEH FOOTER MUST EXISTETH!
-    if ( !defined($footer_octet) or ( $footer_octet != _FOOTER_OCT ) ) {
+    if ( !defined($footer_octet) ) {
+        warn "No footer octet found from data \'" . $data . "\'";
+        return;
+    }
+    if ( $footer_octet != _FOOTER_OCT ) {
         warn "Invalid footer: $footer_octet\n";
         return;
     }
@@ -60,7 +65,8 @@ sub unpack_raw_data {
     my ($resp_data) = @_;
 
     my ( $header, $size, $body, $footer );
-    ( $header, $size, $resp_data ) = unpack_data_header($resp_data) or return;
+    ( $header, $size, $resp_data ) = unpack_data_header($resp_data)
+        or return;
     ( $body, $resp_data ) = unpack_data_body( $resp_data, $size );
     ( $footer, $resp_data ) = unpack_data_footer($resp_data) or return;
 
