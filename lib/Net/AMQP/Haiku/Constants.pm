@@ -3,7 +3,7 @@ package Net::AMQP::Haiku::Constants;
 use strict;
 use warnings;
 require Exporter;
-our @ISA = qw(Exporter);
+our @ISA    = qw(Exporter);
 our @EXPORT = qw(
     DEFAULT_HOST DEFAULT_PORT DEFAULT_PROTO DEFAULT_TIMEOUT
     DEFAULT_LOCALE DEFAULT_AUTH_MECHANISM
@@ -17,6 +17,7 @@ our @EXPORT = qw(
     DEFAULT_CORRELATION_ID DEFAULT_CONSUMER_TAG FLAG_DELIVERY FLAG_PRIORITY
     FLAG_AUTO_DELETE FLAG_DURABLE FLAG_NO_WAIT FLAG_EXCLUSIVE FLAG_PASSIVE
     @PUBLISH_FRAME_ATTRS @HEADER_FRAME_ATTRS FLAG_NO_LOCAL FLAG_INTERNAL
+    FLAG_IF_UNUSED FLAG_IF_EMPTY
     $AUTH_MECHANISM_LIST $EXCHANGE_TYPES
 );
 
@@ -65,9 +66,11 @@ use constant FLAG_NO_ACK    => 1;    # frame ack
 use constant FLAG_EXCLUSIVE => 0;    # request exclusive consumer access
 use constant FLAG_DURABLE =>
     0;    # set queue as durable. Let the mnesia db bring it back on reboot
-use constant FLAG_NO_WAIT     => 0;  # tells the server not to reply to method
-use constant FLAG_NO_LOCAL    => 0;  # no_local flag
-use constant FLAG_AUTO_DELETE => 0;  # automaticaly delete the message
+use constant FLAG_NO_WAIT     => 0; # tells the server not to reply to method
+use constant FLAG_NO_LOCAL    => 0; # no_local flag
+use constant FLAG_IF_UNUSED   => 1; # flag for deleting a queue if it's unused
+use constant FLAG_IF_EMPTY    => 1; # flag for deleting a queue if it's empty
+use constant FLAG_AUTO_DELETE => 0; # automaticaly delete the message
 use constant DEFAULT_CONSUMER_TAG   => '';     # default consumer tag
 use constant DEFAULT_CORRELATION_ID => '1';    #
 use constant FLAG_INTERNAL          => 0;
