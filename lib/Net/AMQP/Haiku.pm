@@ -301,9 +301,11 @@ sub receive {
     my $get_frame = make_get_header( $queue_name, $recv_args );
     $self->{debug} and print "Get frame:\n" . Dumper($get_frame) . "\n";
     $self->_send_frames($get_frame) or return;
-    my ( $get_resp_frame, $get_resp_raw ) = $self->_recv() or return;
+    my ( $get_resp_frame, $get_resp_raw )
+        = $self->_recv( $self->{tuning_parameters}->{frame_max} )
+        or return;
 
-    my ( $resp_data, $header, $body, $footer, $size )
+    my ( $resp_data, $get_header, $get_body, $get_footer, $size )
         = unpack_raw_data($get_resp_raw);
 
     my ($get_resp) = deserialize($get_resp_frame) or return;
@@ -591,29 +593,32 @@ sub _send {
 }
 
 sub _recv {
-    my ($self) = @_;
+    my ( $self, $resp_len ) = @_;
+
+    $resp_len ||= DEFAULT_RECV_LEN;
 
     $self->_set_recv_timeout();
 
-    my ( $data, $data_len ) = $self->_read_socket(DEFAULT_RECV_LEN);
+    my ( $data, $data_len ) = $self->_read_socket($resp_len);
 
     unless ($data) {
-        $data = $self->_read_socket(DEFAULT_RECV_LEN) or return;
+        $data .= $self->_read_socket($resp_len) or return;
     }
-    my ( $header, $body, $footer, $size );
+    my ( $header, $body, $footer, $payload_size );
 
-    ( $header, $size, $data ) = unpack_data_header($data) or return;
-    ( $body, $data ) = unpack_data_body( $data, $size ) or return;
+    ( $header, $payload_size, $data ) = unpack_data_header($data) or return;
+    ( $body, $data ) = unpack_data_body( $data, $payload_size ) or return;
 
     # Do we have more to read?
-    if ( length $body < $size || length $data == 0 ) {
-        my $size_remaining = $size + _FOOTER_LENGTH - length $body;
+    if ( length $body < $payload_size || length $data == 0 ) {
+        my $size_remaining = $payload_size + _FOOTER_LENGTH - length $body;
         while ( $size_remaining > 0 ) {
             my $chunk = $self->_read_socket($size_remaining) or return;
             $size_remaining -= length $chunk;
             $data .= $chunk;
         }
-        my ($tmp_bod) = unpack_data_body( $data, $size - length($body) )
+        my ($tmp_bod)
+            = unpack_data_body( $data, $payload_size - length($body) )
             or return;
         $body .= $tmp_bod;
     }
