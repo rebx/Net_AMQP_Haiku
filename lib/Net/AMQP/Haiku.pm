@@ -122,18 +122,13 @@ sub open_channel {
         and print "Sending open channel frame:\n"
         . Dumper($open_channel) . "\n";
     $self->_send_frames( $open_channel, $channel ) or return;
-    my ($open_channel_resp) = $self->_recv_frames() or return;
-
-    $self->{debug}
-        and print "Open channel response: "
-        . Dumper($open_channel_resp) . "\n";
-
-    if (!$open_channel_resp->method_frame->isa(
-            'Net::AMQP::Protocol::Channel::OpenOk') )
+    if ( !$self->_check_frame_response('Net::AMQP::Protocol::Channel::OpenOk')
+        )
     {
-        carp "Unable to set channel to $channel";
+        warn "Unable to set channel to $channel";
         return 0;
     }
+
     return 1;
 }
 
@@ -146,15 +141,14 @@ sub close_channel {
     my $frame_close = Net::AMQP::Frame::Method->new(
         method_frame => Net::AMQP::Protocol::Channel::Close->new() );
     $self->_send_frames($frame_close);
-    my ($frame_close_resp) = $self->_recv_frames() or return;
 
-    if (!$frame_close_resp->can('method_frame')
-        or !$frame_close_resp->method_frame->isa(
+    if (!$self->_check_frame_response(
             'Net::AMQP::Protocol::Channel::CloseOk') )
     {
-        warn "Unable to close channel $channel properly!";
+        warn "Unable to close channel $channel";
         return 0;
     }
+
     return 1;
 }
 
@@ -164,12 +158,10 @@ sub close_connection {
     my $close_frame = Net::AMQP::Protocol::Connection::Close->new();
     $self->_send_frames( $close_frame, HANDSHAKE_CHANNEL );
 
-    my ($close_resp) = $self->_recv_frames();
-
     return 0
         if (
         !$self->_check_frame_response(
-            $close_resp, 'Net::AMQP::Protocol::Connection::CloseOk' ) );
+            'Net::AMQP::Protocol::Connection::CloseOk') );
     return 1;
 }
 
@@ -214,16 +206,14 @@ sub set_queue {
     $self->{debug}
         and print "Declare queue frame: " . Dumper($amqp_queue) . "\n";
     $self->_send_frames($amqp_queue) or return;
-    my ($resp_set_queue) = $self->_recv_frames() or return;
 
-    $self->{debug}
-        and print "set queue response: \n" . Dumper($resp_set_queue) . "\n";
-    if (!$resp_set_queue->method_frame->isa(
+    if (!$self->_check_frame_response(
             'Net::AMQP::Protocol::Queue::DeclareOk') )
     {
-        carp "Unable to set queue name to $queue_name";
+        warn "Unable to set the queue to $queue_name";
         return 0;
     }
+
     $self->{queue} = $queue_name;
     return 1;
 }
@@ -249,15 +239,14 @@ sub set_exchange {
         = Net::AMQP::Protocol::Exchange::Declare->new( %{$exchange_args} );
     $self->_send_frames($exchange_frame) or return;
 
-    my ($exchange_resp) = $self->_recv_frames() or return;
-
     if (!$self->_check_frame_response(
-            $exchange_resp, 'Net::AMQP::Protocol::Exchange::DeclareOk' ) )
+            'Net::AMQP::Protocol::Exchange::DeclareOk') )
     {
-        warn "Unable to set exchange as $exchange_name";
+        warn "Unable to set the exchange to $exchange_name";
         return 0;
     }
-    $self->{debug} and print "Set the exchange as $exchange_name\n";
+    $self->{exchange} = $exchange_name;
+    $self->{debug} and print "Set the exchange as $self->{exchange}\n";
     return 1;
 }
 
@@ -273,7 +262,12 @@ sub send {
         correlation_id => DEFAULT_CORRELATION_ID,
         channel        => $self->{channel},
     };
-    $publish_args->{max_frame_size} = $self->{tuning_parameters}->{frame_max};
+
+    # frame size should be
+    # max frame size -
+    # (header payload +footer payload + null string paded by unpack)
+    $publish_args->{max_frame_size} = $self->{tuning_parameters}->{frame_max}
+        - ( _HEADER_LENGTH + _FOOTER_LENGTH + 1 );
 
     my ( $pub_frame, $frame_header, $send_payload )
         = serialize( $msg, $self->{username}, $publish_args )
@@ -361,21 +355,16 @@ sub bind_queue {
 
     $self->_send_frames($bind_queue_frame) or return;
 
-    my ($bind_resp) = $self->_recv_frames() or return;
+    if ( !$self->_check_frame_response('Net::AMQP::Protocol::Queue::BindOk') )
+    {
+        warn
+            "Unable to bind queue $queue_name to exchange $bind_args->{exchange}";
+        return 0;
+    }
 
     $self->{debug}
-        and print "Got bind response:\n" . Dumper($bind_resp) . "\n";
-
-    if (!$bind_resp->method_frame->isa('Net::AMQP::Protocol::Queue::BindOk') )
-    {
-        warn "Unable to bind to queue $queue_name using exchange "
-            . $bind_args->{exchange}
-            . " and routing key "
-            . $bind_args->{routing_key} . ": "
-            . $bind_resp->method_frame->{reply_text};
-        return;
-    }
-    $self->{debug} and print "Bound to queue $queue_name\n";
+        and print "Bound to queue $queue_name "
+        . "to exchange $bind_args->{exchange}\n";
     return 1;
 }
 
@@ -404,22 +393,58 @@ sub consume {
     return 1;
 }
 
-sub nom {
-    my $self = shift;
-    return $self->consume(@_);
+sub deliver {
+    my ( $self, $cust_deliver_args ) = @_;
+
 }
 
-sub delete {
-    my ( $self, $cust_delete_args ) = @_;
+sub nom {
+    my $self = shift;
+    return if ( !$self->consume(@_) );
 
-    return unless $cust_delete_args;
+}
 
-   # hard error. No code magic/automation. The user must explicitly state that
-    if ( !exists( $cust_delete_args->{queue} ) ) {
+sub purge_queue {
+    my ( $self, $queue_name, $purge_args ) = @_;
+
+    return unless $queue_name;
+
+    $purge_args ||= {};
+    my $def_purge_args
+        = Net::AMQP::Haiku::Properties::def_queue_purge_properties();
+    $purge_args->{queue} = $queue_name;
+    $purge_args = { %{$def_purge_args}, %{$purge_args} };
+
+    my $purge_frame
+        = Net::AMQP::Protocol::Queue::Purge->new( %{$purge_args} );
+    $self->_send_frames($purge_frame) or return;
+
+    my ($purge_resp) = $self->_recv_frames() or return;
+
+    if (!$purge_resp->method_frame->isa(
+            'Net::AMQP::Protocol::Queue::PurgeOk') )
+    {
+        warn "Unable to purge queue $queue_name";
+        $self->{debug}
+            and print "Purge response frame:\n" . Dumper($purge_resp) . "\n";
+        return 0;
+    }
+    $self->{debug}
+        and print "Purged "
+        . $purge_resp->method_frame->{message_count}
+        . " messages from the $queue_name queue\n";
+    return 1;
+}
+
+sub delete_queue {
+    my ( $self, $queue_name, $cust_delete_args ) = @_;
+
+    unless ($queue_name) {
         warn "No queue given to delete";
         return;
     }
-
+    $cust_delete_args ||= {};
+    $cust_delete_args->{queue} = $queue_name;
     my $def_delete_args
         = Net::AMQP::Haiku::Properties::def_queue_delete_properties();
     my $delete_args = { %{$def_delete_args}, %{$cust_delete_args} };
@@ -427,14 +452,9 @@ sub delete {
         = Net::AMQP::Protocol::Queue::Delete->new( %{$delete_args} );
     $self->_send_frames($delete_queue_frame) or return;
 
-    my ($delete_queue_resp) = $self->_recv_frames() or return;
-
-    if (!$self->_check_frame_response(
-            $delete_queue_resp, 'Net::AMQP::Protocol::Queue::DeleteOk' ) )
+    if ( !$self->_check_frame_response('Net::AMQP::Protocol::Queue::DeleteOk')
+        )
     {
-        warn
-            "The queue $delete_args->{queue} was not deleted. Response frame:\n"
-            . Dumper($delete_queue_resp) . "\n";
         return 0;
     }
 
@@ -452,9 +472,8 @@ sub halt_consumption {
         nowait       => $self->{nowait} );
     $self->_send_frames($halt_consume_frame) or return;
 
-    my ($halt_consume_resp) = $self->_recv_frames() or return;
-    if (!$self->_check_frame_response(
-            $halt_consume_resp, 'Net::AMQP::Protocol::Basic::CancelOk' ) )
+    if ( !$self->_check_frame_response('Net::AMQP::Protocol::Basic::CancelOk')
+        )
     {
         warn
             "Unable to stop consumer on queue $self->{queue} with tag $consumer_tag";
@@ -605,7 +624,7 @@ sub _read_socket {
     my ( $self, $length ) = @_;
 
     # default length is header + emty body + footer
-    $length = _HEADER_LENGTH + _HEADER_LENGTH if ( !defined($length) );
+    $length = _HEADER_LENGTH + _FOOTER_LENGTH if ( !defined($length) );
     $self->{debug}
         and print "_read_socket is reading $length characters\n";
     my ( $payload, $data_len );
@@ -633,9 +652,13 @@ sub _read_socket {
 }
 
 sub _check_frame_response {
-    my ( $self, $frame, $response ) = @_;
+    my ( $self, $response ) = @_;
 
-    return unless $frame && $response;
+    unless ($response) {
+        warn "No response frame given to " . ( caller(0) )[3];
+        return;
+    }
+    my ($frame) = $self->_recv_frames();
 
     if ( !UNIVERSAL::isa( $frame, 'Net::AMQP::Frame::Method' ) ) {
         warn "Response frame is not a valid Net::AMQP::Frame::Method class:\n"
@@ -643,17 +666,20 @@ sub _check_frame_response {
         return;
     }
 
-    if ( $frame->method_frame->isa($response) ) {
-        $self->{debug}
-            and print "Response frame is of expected response "
-            . $response . "\n";
-        return 1;
+    if ( !$frame->method_frame->isa($response) ) {
+        warn "Response frame is of expected response " 
+            . $response . '.'
+            . (
+            ( defined( $frame->method_frame->{reply_text} ) )
+            ? 'Error: ' . $frame->method_frame->{reply_text}
+            : '' );
+        return 0;
     }
 
     $self->{debug}
-        and print "Frame is not of expected response $response\n"
+        and print "Frame is of expected response $response\n"
         . Dumper($frame) . "\n";
-    return 0;
+    return 1;
 }
 
 sub _load_spec_file {
@@ -889,14 +915,15 @@ Net::AMQP::Haiku - A simple Perl extension for AMQP.
 standard perl libraries, apart from Net::AMQP, and be compatible from
 Perl version 5.8.8.
 
-=head2 EXPORT
+=head1 EXPORT
 
 NAME
 VERSION
 
-=head2 PUBLIC METHODS
+=head1 PUBLIC CLASS METHODS
+    
 
-=item new
+=head2 B<new>
 
     Creates a new instance of the Net::AMQP::Haiku Object
     
@@ -926,8 +953,10 @@ VERSION
     
     This method returns the new instance of the Net::AMQP::Haiku object
     
-=cut
+=head2 B<connect>
 
+    Opens a connection to the AMQP server. It takes 
+    
 
 =head1 SEE ALSO
 
