@@ -368,11 +368,13 @@ sub bind_queue {
     return 1;
 }
 
-sub consume {
-    my ( $self, $cust_nom_args ) = @_;
+sub consume_queue {
+    my ( $self, $queue_name, $cust_nom_args ) = @_;
+
+    return unless $queue_name;
 
     $cust_nom_args ||= {};
-    $cust_nom_args->{queue} ||= $self->{queue};
+    $cust_nom_args->{queue} ||= $queue_name;
 
     my $def_nom_args = def_consume_properties();
     my $nom_args = { %{$def_nom_args}, %{$cust_nom_args} };
@@ -390,18 +392,43 @@ sub consume {
         return;
     }
     $self->{consumer_tag} = $nom_resp->method_frame->consumer_tag;
+    $self->{debug}
+        and print "Ready to consume from queue "
+        . $queue_name
+        . "using consumer tag $self->{consumer_tag}\n";
     return 1;
 }
 
-sub deliver {
-    my ( $self, $cust_deliver_args ) = @_;
-
+sub consume {
+    my $self = shift;
+    return $self->nom(@_);
 }
 
 sub nom {
-    my $self = shift;
-    return if ( !$self->consume(@_) );
+    my ($self) = @_;
 
+    unless ( $self->{consumer_tag} ) {
+        carp "consumer_tag attribute is not defined. "
+            . "call consume_queue() method first";
+    }
+
+    my ( $nom_resp_frame, $nom_raw_data ) = $self->_recv() or return;
+
+    my ($nom_frame) = deserialize($nom_resp_frame) or return;
+    if ( !$nom_frame->method_frame->isa('Net::AMQP::Protocol::Basic::Deliver')
+        )
+    {
+        warn "Got invalid response frame back while "
+            . "consuming from $self->{queue} queue";
+        print STDERR "Frame response is:\n" . Dumper($nom_frame) . "\n";
+        return;
+    }
+    my ( $nom_data, $nom_hdr, $nom_bod, $nom_ftr, $size )
+        = unpack_raw_data($nom_raw_data);
+
+    my ($nom_msg) = ( unpack_raw_data($nom_data) )[2];
+    $self->{debug} and print "Consumed message: \'" . $nom_msg . "\'\n";
+    return $nom_msg;
 }
 
 sub purge_queue {
@@ -482,6 +509,7 @@ sub halt_consumption {
     $self->{debug}
         and print
         "Consumer with tag $consumer_tag on $self->{queue} has stopped.\n";
+    $self->{consumer_tag} = DEFAULT_CONSUMER_TAG;
     return 1;
 }
 
@@ -667,12 +695,14 @@ sub _check_frame_response {
     }
 
     if ( !$frame->method_frame->isa($response) ) {
-        warn "Response frame is of expected response " 
+        print STDERR "Response frame is not of expected response "
             . $response . '.'
             . (
             ( defined( $frame->method_frame->{reply_text} ) )
             ? 'Error: ' . $frame->method_frame->{reply_text}
             : '' );
+        $self->{debug}
+            and print STDERR "Got response:\n" . Dumper($frame) . "\n";
         return 0;
     }
 
