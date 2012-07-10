@@ -26,7 +26,7 @@ my $exchange_type  = $test_conf_hash->{exchange_type};
 my $routing_key    = $test_conf_hash->{routing_key};
 my $amqp_spec_file = File::Spec->join( $Bin, 'amqp0-8.xml' );
 my $test_msg       = $test_conf_hash->{test_message};
-my $num_queue      = 5;
+my $num_queue      = $test_conf_hash->{num_messages};
 my $recv_msg;
 
 require_ok('Net::AMQP::Haiku');

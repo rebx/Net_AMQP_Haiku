@@ -27,7 +27,8 @@ my $exchange_type  = $test_conf_hash->{exchange_type};
 my $routing_key    = $test_conf_hash->{routing_key};
 my $amqp_spec_file = File::Spec->join( $Bin, 'amqp0-8.xml' );
 my $test_msg       = $test_conf_hash->{test_message};
-my $num_queue      = 5;
+my $consumer_tag   = $test_conf_hash->{consumer_tag};
+my $num_queue      = $test_conf_hash->{num_messages};
 my $recv_msg;
 
 require_ok('Net::AMQP::Haiku');
@@ -43,15 +44,23 @@ ok( $p->bind_queue(
             routing_key => $routing_key
         } ),
     "Test bind to queue $queue" );
-ok( $p->consume( { queue => $queue } ), "Test consume to $queue" );
+ok( $p->consume_queue($queue), "Test consume to $queue" );
 isnt( $p->{consumer_tag}, DEFAULT_CONSUMER_TAG,
     "test consumer tag is not the same as the default one" );
+ok( $p->halt_consumption(),
+    "test stop consuming from $queue with tag $p->{consumer_tag}" );
+ok( $p->consume_queue( $queue, { consumer_tag => $consumer_tag } ),
+    "Test consume to $queue" );
+isnt( $p->{consumer_tag}, DEFAULT_CONSUMER_TAG,
+    "test consumer tag is not the same as the default one" );
+is ($p->{consumer_tag}, $consumer_tag, "Test consumer tag is $consumer_tag");
+
+ok( $p->purge_queue($queue), "test purge queue $queue before consuming" );
 
 for ( my $i = 1; $i <= $num_queue; $i++ ) {
     $recv_msg = '';
-    ok( $recv_msg = $p->receive($queue),
+    ok( $recv_msg = $p->nom( $queue, { consumer_tag => $consumer_tag } ),
         "test consume $queue $i of $num_queue" );
-    print "Got message: $recv_msg\n";
     is( $recv_msg, $test_msg,
         "test consumed message in queue $queue is $test_msg" );
 }
