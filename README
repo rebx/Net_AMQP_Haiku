@@ -4,26 +4,98 @@ Net-AMQP-Haiku version 0.01
 A Simple Perl Module using Net::AMQP. 
 
 This module is designed to be as simple as possible -- this module
-shall only require Net::AMQP to run, and be compatible from Perl
+shall only require Net::AMQP and Try::Tiny to run, and be compatible from Perl
 version 5.8.8 and up.
 
 USAGE
 
-use Net::AMQP::Haiku;
-my $amqp = Net::AMQP::Haiku->new({
-    host=> 'localhost',
-    spec_file => '/path/to/spec/file/amqp'
-  });
-$amqp->open_channel();
-$amqp->set_queue('foo');
-$amqp->send("ohai!");
-print $amqp->receive();
+    Module Import and Object Instantiation
+    
+        use Net::AMQP::Haiku;
+        my $amqp = Net::AMQP::Haiku->new({
+            host=> 'localhost',
+            spec_file => '/path/to/spec/file/amqp'
+        });
+          
+    Open a Channel
+    
+        # open default channel (set to 1)
+        $amqp->open_channel();
+        
+        # open a specific channel
+        my $channel_id = 72;
+        $amqp->open_channel($channel_id);
+        
+    Set the Queue
+    
+        # basic example for a queue named foo
+        $amqp->set_queue('foo');
+        
+        # full options
+        $amqp->set_queue($queue_name, { auto_delete => 1,
+                                        no_ack => 0,
+                                        nowait => 0,
+                                        durable => 1,
+                                        passive => 0,
+                                        ticket => 0,
+                                        exclusive => 0 });
+        
+    Basic Publish
+    
+        # send a message using defaults
+        $amqp->send("ohai!");
+        
+        # send a message using all available options
+        $amqp->send("ohai!", $queue_name, { routing_key => $routing_key,
+                                            channel=> $channel,
+                                            reply_to => $reply_to,
+                                            correlation_id => $correlation_id });
+        
+    Basic Message Retrieval
+    
+        # basic example after open_channel() and set_queue()
+        # receive() and get() are synonymous
+        print $amqp->receive();
+        $msg = $amqp->receive();
+        $msg = $amqp->get();
+        
+        # full options
+        $msg = $amqp->get($queue_name, {no_ack => 0});
+        
+    Basic Producer
+        
+        # basic example after open_channel() and set_queue()
+        $amqp->send("test message");
+        
+    Basic Consumer
+        
+        # basic consumer after open_channel() and set_queue()
+        $amqp->nom( { queue => $queue_name} );
+        # stop consuming
+        $amqp->halt_consumption();
+        # or
+        $amqp->halt_consumption($consumer_tag);
+        
+        
+    Purge a Queue
+        
+        $amqp->purge_queue($queue_name);
+        
+    Delete a Queue
+    
+        $amqp->delete_queue($queue_name);
 
 DEPENDENCIES
 
-This module requires only this module:
+This module requires the following modules for operation:
 
-  Net::AMQP
+    Net::AMQP
+    Try::Tiny
+  
+For testing purposes, these modules are required:
+
+    Test::Exception
+    YAML
 
 INSTALLATION
 
