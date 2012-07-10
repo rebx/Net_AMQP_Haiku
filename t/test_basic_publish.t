@@ -3,7 +3,7 @@
 
 use strict;
 use File::Spec;
-use Test::More 'tests' => 20;
+use Test::More 'tests' => 21;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -59,7 +59,8 @@ is( $f->{queue}, $queue, "test queue attribute is set to $queue" );
 ok( $f->send($msg_send), "test send message to server" );
 ok( $msg_recv = $f->receive($queue), "Test get message on queue $queue" );
 is( "$msg_recv", "$msg_send", "Test got the ping message $msg_send" );
-ok( $f->delete( { queue => $queue } ), "test delete queue $queue" );
-ok( $f->close(), "test close connection properly" );
+ok( $f->purge_queue($queue),  "Test purge queue $queue" );
+ok( $f->delete_queue($queue), "test delete queue $queue" );
+ok( $f->close(),              "test close connection properly" );
 
 done_testing();
