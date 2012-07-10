@@ -87,4 +87,12 @@ sub def_queue_delete_properties {
     };
 }
 
+sub def_queue_purge_properties {
+    return {
+        ticket => DEFAULT_TICKET,
+        queue  => DEFAULT_QUEUE,
+        nowait => FLAG_NO_WAIT,
+    };
+}
+
 1;
