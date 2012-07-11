@@ -305,9 +305,6 @@ sub receive {
         = $self->_recv( $self->{tuning_parameters}->{frame_max} )
         or return;
 
-    my ( $resp_data, $get_header, $get_body, $get_footer, $size )
-        = unpack_raw_data($get_resp_raw);
-
     my ($get_resp) = deserialize($get_resp_frame) or return;
 
     if ( !$get_resp->method_frame->isa('Net::AMQP::Protocol::Basic::GetOk') )
@@ -317,8 +314,65 @@ sub receive {
                     'Net::AMQP::Protocol::Basic::GetEmpty') ) ? '' : undef );
         return $ret_resp;
     }
+    $self->{debug}
+        and print "Got Basic::Get response:\n" . Dumper($get_resp) . "\n";
 
-    my ($queue_msg) = ( unpack_raw_data($resp_data) )[2];
+    my ( $get_resp_data, $get_header, $get_body, $get_footer, $get_size )
+        = unpack_raw_data($get_resp_raw);
+    my ($get_body_frame)
+        = deserialize( $get_header . $get_body . $get_footer )
+        or return;
+
+    if (!UNIVERSAL::isa( $get_body_frame, 'Net::AMQP::Frame::Header' )
+        or !$get_body_frame->header_frame->isa(
+            'Net::AMQP::Protocol::Basic::ContentHeader') )
+    {
+        warn "Unexpected response from server after Basic::GetOk:\n"
+            . Dumper($get_body_frame);
+        return;
+    }
+
+    $self->{debug}
+        and print "Get body frame:\n" . Dumper($get_body_frame) . "\n";
+
+    # remove more headers
+    my ( $msg_size, $msg_data )
+        = ( unpack_data_header($get_resp_data) )[ 1, 2 ];
+
+    # if the lenghth of the response is less than the specified body size
+    # from the frame header, fetch some more data
+    my $rem_len
+        = $get_body_frame->{body_size} - length($msg_data) + _FOOTER_LENGTH;
+    while ( $rem_len > 0 ) {
+        $self->{debug}
+            and print "Response data is currently "
+            . length($get_resp_data)
+            . " long. getting "
+            . $rem_len
+            . " more...\n";
+
+        #my ( $chunk_frame, $chunk_data ) = $self->_recv();
+        #
+        #my ($chunk_frame, $chunk_data) = $self->_recv($rem_len);
+        #my ( $chunk_body, $chunk_rem )
+        #    = unpack_data_body( $chunk_data, $rem_len )
+        #    or return;
+
+        my ( $chunk_resp_raw, $chunk_resp_len )
+            = $self->_read_socket($rem_len)
+            or return;
+        my ( $chunk_resp_size, $chunk_resp_data )
+            = ( unpack_data_header($chunk_resp_raw) )[ 1, 2 ];
+
+        my ( $chunk_body, $chunk_rem )
+            = unpack_data_body( $chunk_resp_data, $rem_len )
+            or return;
+        $msg_data .= $chunk_body;
+        $rem_len -= length($chunk_body);
+    }
+
+    my ($queue_msg)
+        = unpack_data_body( $msg_data, $get_body_frame->{body_size} );
     return $queue_msg;
 }
 
