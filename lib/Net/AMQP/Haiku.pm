@@ -419,11 +419,13 @@ sub receive {
 
     # now see how much message we have by unpacking the body
     my ( $msg_body, $msg_tail, $msg_footer );
+    $msg_body = '';
     ( $msg_body, $msg_tail )
         = unpack_data_body( $content_data, $content_size );
-        
-    ($msg_body, $msg_tail) = $self->_has_more_data($msg_body, $msg_tail, $content_size);
     
+    while (length($msg_body) < $get_body_frame->{body_size}) {    
+        ($msg_body, $msg_tail) = $self->_has_more_data($msg_body, $msg_tail, $content_size);
+    }
     # now unpack the footer
     ($msg_footer, $msg_tail) = unpack_data_footer($msg_tail) or return;
     return $msg_body;
@@ -816,6 +818,7 @@ sub _has_more_data {
     if ( length $body < $payload_size || length $data == 0 ) {
         my $size_remaining = $payload_size + _FOOTER_LENGTH - length $body;
         while ( $size_remaining > 0 ) {
+            $self->{debug} and print "Getting $size_remaining chars more of data\n";
             my ($chunk, $chunk_len) = $self->_read_socket($size_remaining) or return;
             $size_remaining -= $chunk_len;
             $data .= $chunk;
