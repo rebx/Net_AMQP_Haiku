@@ -8,5 +8,6 @@ exchange_type: direct
 routing_key: test
 test_message: ohai!
 consumer_tag: testtag
+reply_to: testreply
 num_messages: 5
 
