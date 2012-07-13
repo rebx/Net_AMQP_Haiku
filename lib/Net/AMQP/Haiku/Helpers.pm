@@ -128,7 +128,8 @@ sub make_get_header {
     my ( $queue, $extra_args ) = @_;
 
     return unless $queue;
-    $extra_args ||= { ticket => DEFAULT_TICKET };
+    $extra_args ||= {};
+    $extra_args->{ticket} ||= DEFAULT_TICKET;
 
     # in a synchronous world
     return Net::AMQP::Protocol::Basic::Get->new(
@@ -140,7 +141,7 @@ sub make_get_header {
 sub _chop_frames {
     my ( $raw_msg, $max_frame_size ) = @_;
     return unless $raw_msg && $max_frame_size;
-    return unpack( "(a" . $max_frame_size . ")*", $raw_msg);
+    return unpack( "(a" . $max_frame_size . ")*", $raw_msg );
 }
 
 sub check_exchange_type {
