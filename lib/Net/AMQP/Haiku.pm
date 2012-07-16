@@ -411,100 +411,33 @@ sub receive {
     $self->{debug}
         and print "Get body frame:\n" . Dumper($get_body_frame) . "\n";
 
-    # now let's unpack the header from the content and see if we have
-    # more to fetch
-    my ($content_header,  $content_size, $content_data,
-        $content_type_id, $content_channel
-    ) = unpack_data_header($get_resp_data);
-
-    # now see how much message we have by unpacking the body
     my ( $msg_body, $msg_tail, $msg_footer );
-    $msg_body = '';
-    ( $msg_body, $msg_tail )
-        = unpack_data_body( $content_data, $content_size );
+    my $full_msg_body =  $msg_body = '';
+    $msg_tail = $get_resp_data;
+    while (length($full_msg_body) < $get_body_frame->{body_size}) {
+        unless ($msg_tail) {
+            ($msg_tail) = $self->_read_socket(DEFAULT_RECV_LEN);
+        }
+        # now let's unpack the header from the content and see if we have
+        # more to fetch
+        my ($content_header,  $content_size, $content_data,
+            $content_type_id, $content_channel
+        ) = unpack_data_header($msg_tail);
     
-    while (length($msg_body) < $get_body_frame->{body_size}) {    
+        # now see how much message we have by unpacking the body
+        ( $msg_body, $msg_tail )
+            = unpack_data_body( $content_data, $content_size );
+        
+        print "Message body is currently " . length $msg_body . " long\n";
         ($msg_body, $msg_tail) = $self->_has_more_data($msg_body, $msg_tail, $content_size);
+        
+        # now unpack the footer
+        ($msg_footer, $msg_tail) = unpack_data_footer($msg_tail) or return;
+        $full_msg_body .= $msg_body;
+        print "Message body is currently " . length $full_msg_body . " long\n";
+        $msg_body = '';
     }
-    # now unpack the footer
-    ($msg_footer, $msg_tail) = unpack_data_footer($msg_tail) or return;
-    return $msg_body;
-
-    ## if the size of the body we have is less than the indicated data,
-    ## then we should read a length of
-    ## (frame_body_size) + FOOTER - lenght of body we currently have
-    ##my $rem_len = $content_size + _FOOTER_LENGTH - length $msg_body;
-    #my $rem_len = $get_body_frame->{body_size} + _FOOTER_LENGTH - length $msg_body;
-    #
-    #if ( length($msg_body) < $content_size or length $content_data <= 0 ) {
-    #    my $fetch_len = $rem_len;
-    #    while ( $fetch_len > 0 ) {
-    #        my ( $rem_chunk, $rem_chunk_len ) = $self->_read_socket($fetch_len);
-    #        my @chunk_frames = unpack( "(A" . $self->{tuning_parameters}->{frame_max} . ")*", $rem_chunk);
-    #        #my @chunk_frames = Net::AMQP::Haiku::Helpers::_chop_frames($rem_chunk, $self->{tuning_parameters}->{frame_max}) or die "Unable to chop frames:\n" . Dumper($rem_chunk) . "\n";
-    #        $msg_tail .= join('', @chunk_frames);
-    #        $fetch_len -= length $msg_tail;
-    #        #map {$msg_body .= $_} @chunk_frames;
-    #    #    $fetch_len -= $rem_chunk_len;
-    #    #    $msg_tail .= $rem_chunk;
-    #    }
-    #    #my @rem_stuff = deserialize($msg_tail);
-    #    # unpack the remaining data and leave the footer intact
-    #    # and append that to the message body
-    #    #$msg_body .=
-    #    #map {$msg_body .= $_} @rem_stuff;
-    #    $msg_body = unpack_data_body($msg_body, $rem_len - 1);
-    #}
-    ## now unpack the footer
-    ##($msg_footer, $msg_tail) = unpack_data_footer($msg_tail) or return;
-    #
-    ## for more paranoia
-    ##if (length($msg_tail)> 0) {
-    ##    warn "Oh noes! we still have more data left! " . Dumper($msg_tail);
-    ##    return;
-    ##}
-    #
-    #my ($queue_msg)
-    #    = unpack_data_body( $msg_body, $get_body_frame->{body_size} );
-    #$self->{debug} and print "Returning \'" . $queue_msg . "\'\n";
-    #return $queue_msg;
-    ##return $msg_body;
-    ##
-    ### if the lenghth of the response is less than the specified body size
-    ### from the frame header, fetch some more data
-    ##my $rem_len
-    ##    = $get_body_frame->{body_size} - length($msg_data) + _FOOTER_LENGTH;
-    ##while ( $rem_len > 0 ) {
-    ##    $self->{debug}
-    ##        and print "Response data is currently "
-    ##        . length($get_resp_data)
-    ##        . " long. getting "
-    ##        . $rem_len
-    ##        . " more...\n";
-    ##
-    ##    #my ( $chunk_frame, $chunk_data ) = $self->_recv();
-    ##    #
-    ##    #my ($chunk_frame, $chunk_data) = $self->_recv($rem_len);
-    ##    #my ( $chunk_body, $chunk_rem )
-    ##    #    = unpack_data_body( $chunk_data, $rem_len )
-    ##    #    or return;
-    ##
-    ##    my ( $chunk_resp_raw, $chunk_resp_len )
-    ##        = $self->_read_socket($rem_len)
-    ##        or return;
-    ##    my ( $chunk_resp_size, $chunk_resp_data )
-    ##        = ( unpack_data_header($chunk_resp_raw) )[ 1, 2 ];
-    ##
-    ##    my ( $chunk_body, $chunk_rem )
-    ##        = unpack_data_body( $chunk_resp_data, $rem_len )
-    ##        or return;
-    ##    $msg_data .= $chunk_body;
-    ##    $rem_len -= length($chunk_body);
-    ##}
-    ##
-    ##my ($queue_msg)
-    ##    = unpack_data_body( $msg_data, $get_body_frame->{body_size} );
-    ##return $queue_msg;
+    return $full_msg_body;
 }
 
 sub get {
@@ -566,6 +499,28 @@ sub bind_queue {
     return 1;
 }
 
+=item consume_queue
+
+    Sends a notice to the server to let it know that the client wants to
+    register itself as a consumer
+    
+    Arguments
+    
+    queue_name - the name of the queue being consumed from
+    cust_nom_args - a hash which can have the following attributes
+        ticket
+        queue [automatically populated from the queue_name]
+        consumer_tag - the designated name of the consumer [automatically generated]
+        no_local - the publisher won't be able to consume its own messages
+        no_ack - server does not expect acknowledgments for messages
+        exclusive - request exclusive client access
+        nowait - the client will not wait for the reply method
+        
+    The function returns 1 (true) if the server responses with ConsumeOk.
+    Zero or None will be handed back in the event of a failure
+    
+=cut
+
 sub consume_queue {
     my ( $self, $queue_name, $cust_nom_args ) = @_;
 
@@ -601,6 +556,12 @@ sub consume {
     my $self = shift;
     return $self->nom(@_);
 }
+
+=item nom
+
+    consumes messages from a queue, after sending Consume frame
+    
+=cut
 
 sub nom {
     my ($self) = @_;
@@ -814,16 +775,19 @@ sub _recv {
 
 sub _has_more_data {
     my ($self, $body, $data, $payload_size) = @_;
-    
+    unless (($data || $body) && $payload_size) {
+        return ($body, $data);
+    }
+    my $tmp_bod;
     if ( length $body < $payload_size || length $data == 0 ) {
-        my $size_remaining = $payload_size + _FOOTER_LENGTH - length $body;
-        while ( $size_remaining > 0 ) {
-            $self->{debug} and print "Getting $size_remaining chars more of data\n";
-            my ($chunk, $chunk_len) = $self->_read_socket($size_remaining) or return;
-            $size_remaining -= $chunk_len;
+        my $rem_len = $payload_size + _FOOTER_LENGTH - length $body;
+        while ( $rem_len > 0 ) {
+            $self->{debug} and print "Getting $rem_len chars more of data\n";
+            my ($chunk, $chunk_len) = $self->_read_socket($rem_len) or return;
+            $rem_len -= $chunk_len;
             $data .= $chunk;
         }
-        my ($tmp_bod)
+        ($tmp_bod, $data)
             = unpack_data_body( $data, $payload_size - length($body) )
             or return;
         $body .= $tmp_bod;
