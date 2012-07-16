@@ -1,5 +1,39 @@
 package Net::AMQP::Haiku;
 
+=head1 NAME
+
+Net::AMQP::Haiku - A simple Perl extension for AMQP.
+
+=head1 SYNOPSIS
+
+  use Net::AMQP::Haiku;
+  my $bugs = Net::AMQP::Haiku->new({
+    host=> 'localhost',
+    spec_file => '/path/to/spec/file/amqp'
+  });
+  $bugs->open_channel();
+  $bugs->set_queue('foo');
+  $bugs->send("ohai!");
+  print $bugs->receive();
+
+=head1 DESCRIPTION
+
+    The design for this module is to be as simple as possible -- use only the
+standard perl libraries (apart from Net::AMQP and Try::Tiny), and be
+compatible from Perl version 5.8.8.
+
+=head1 EXPORT
+
+NAME
+VERSION
+
+=head1 PUBLIC CLASS METHODS
+    
+=over 4
+
+=cut
+
+
 use 5.008008;
 use strict;
 use warnings;
@@ -20,6 +54,38 @@ use Socket qw(IPPROTO_TCP TCP_NODELAY);
 use Net::AMQP::Haiku::Constants;
 use Net::AMQP::Haiku::Properties;
 use Net::AMQP::Haiku::Helpers;
+
+=item B<new>
+
+    Creates a new instance of the Net::AMQP::Haiku Object
+    
+    At a minimum, it expects the host name, and path to the AMQP spec file
+    
+    A list of configurable options are as follows:
+    
+    host            - the name of the AMQP server
+    proto           - the protocol used
+    port            - the port to connect to
+    vhost           - the name of the virtual host
+    username        - the name of the user to authenticate to the server as
+    password        - the corresponding password
+    locale          - locale that the client wants to use
+    channel         - the channel id to use
+    auth_mechanism  - the authentication mechanism that will be used
+                        by the client
+    spec_file       - the path to the spec file to use
+    debug           - debugging flag
+    timeout         - connection timeout for establishing initial socket
+    
+    Note that queue, exchange, exchange_type, routing_key should be set
+    using their corresponding methods.
+    
+    The method is expected to die if it doesn't find the spec file on the path
+    given. 
+    
+    This method returns the new instance of the Net::AMQP::Haiku object
+    
+=cut
 
 sub new {
     my $class = shift;
@@ -101,6 +167,14 @@ sub debug {
 ###Attributes###
 
 ###Public Methods###
+
+=item B<connect>
+
+    Opens a connection to the AMQP server. No argument is taken in as
+    the host, port, etc. attributes are declared on the object instance    
+
+=cut
+
 sub connect {
     my ($self) = @_;
 
@@ -186,7 +260,7 @@ sub close {
     return 1;
 }
 
-=item set_queue
+=item B<set_queue>
 
     Sets the name of the queue you want to receive/send messages from/to
     
@@ -239,7 +313,7 @@ sub set_queue {
     return 1;
 }
 
-=item set_exchange
+=item B<set_exchange>
 
     binds an exchange to the queue
     
@@ -293,7 +367,7 @@ sub set_exchange {
     return 1;
 }
 
-=item send
+=item B<send>
 
     Sends/Publishes a message to the queue
     
@@ -318,8 +392,8 @@ sub set_exchange {
     
     Example
     
-    $amqp->send("foo");
-    $amqp->send("foo", "testqueue", {routing_key => "testroute"
+    $bugs->send("foo");
+    $bugs->send("foo", "testqueue", {routing_key => "testroute"
         reply_to => "testreply", correlation_id=>72, channel=> 75});
     
 =cut
@@ -338,8 +412,8 @@ sub send {
     $publish_args->{max_frame_size} = $self->{tuning_parameters}->{frame_max}
         - ( _HEADER_LENGTH + _FOOTER_LENGTH + 1 );
     $publish_args->{routing_key} ||= $queue_name;
-    $publish_args->{reply_to} ||= $queue_name;
-    $publish_args->{channel} ||= $self->{channel};
+    $publish_args->{reply_to}    ||= $queue_name;
+    $publish_args->{channel}     ||= $self->{channel};
 
     my ( $pub_frame, $frame_header, $send_payload )
         = serialize( $msg, $self->{username}, $publish_args )
@@ -361,6 +435,27 @@ sub send {
 
     return 1;
 }
+
+=item B<receive>
+
+    Pulls messages off a queue.
+    
+    Arguments
+    
+    queue_name - the name of the queue. Optional, if default settings are used
+    recv_args - a hash that can contain the following attributes
+        ticket
+        queue       - optional. filled in from the queue_name argument
+        no_ack      - don't send acknowledgements to the server
+        reply_to    - specify a reply to name
+        routing_key - specify the routing key name
+        exchange    - the name of the exchange
+        
+    The function returns the message pulled off the queue on success.
+    On failure, it will return an empty string if the server's response is
+    GetEmpty; undef will be returned otherwise
+    
+=cut
 
 sub receive {
     my ( $self, $queue_name, $recv_args ) = @_;
@@ -389,59 +484,25 @@ sub receive {
     $self->{debug}
         and print "Got Basic::GetOk response:\n" . Dumper($get_resp) . "\n";
 
-    # now that we've got an ack that we have a content,
-    # let's parse that too...
-
-    my ( $get_resp_data, $get_header, $get_body, $get_footer, $get_size )
-        = unpack_raw_data($get_resp_content);
-
-    # check if we've got a real content header back
-    # deserialize the header, body and footer of that content
-    my ($get_body_frame)
-        = deserialize( $get_header . $get_body . $get_footer )
+    my ( $get_body_frame, $get_resp_data )
+        = _get_body_frame($get_resp_content)
         or return;
-    if (!UNIVERSAL::isa( $get_body_frame, 'Net::AMQP::Frame::Header' )
-        or !$get_body_frame->header_frame->isa(
-            'Net::AMQP::Protocol::Basic::ContentHeader') )
-    {
-        warn "Unexpected response from server after Basic::GetOk:\n"
-            . Dumper($get_body_frame);
-        return;
-    }
-    $self->{debug}
-        and print "Get body frame:\n" . Dumper($get_body_frame) . "\n";
 
-    my ( $msg_body, $msg_tail, $msg_footer );
-    my $full_msg_body =  $msg_body = '';
-    $msg_tail = $get_resp_data;
-    while (length($full_msg_body) < $get_body_frame->{body_size}) {    
-        # now let's unpack the header from the content and see if we have
-        # more to fetch
-        my ($content_header,  $content_size, $content_data,
-            $content_type_id, $content_channel
-        ) = unpack_data_header($msg_tail);
-    
-        # now see how much message we have by unpacking the body
-        ( $msg_body, $msg_tail )
-            = unpack_data_body( $content_data, $content_size );
-        
-        print "Message body is currently " . length $msg_body . " long\n";
-        ($msg_body, $msg_tail) = $self->_has_more_data($msg_body, $msg_tail, $content_size);
-        print "Message body is currently " . length $msg_body . " long\n";
-        $full_msg_body .= $msg_body;
-    }
-    # now unpack the footer
-    #($msg_footer, $msg_tail) = unpack_data_footer($msg_tail) or return;
-    return $msg_body;
-
+    return $self->_parse_msg( $get_body_frame, $get_resp_data );
 }
+
+=item B<get>
+
+    a method aliased to receive
+
+=cut
 
 sub get {
     my $self = shift;
     return $self->receive(@_);
 }
 
-=item bind_queue
+=item B<bind_queue>
 
     bind an exchang to a queue
     
@@ -495,7 +556,7 @@ sub bind_queue {
     return 1;
 }
 
-=item consume_queue
+=item B<consume_queue>
 
     Sends a notice to the server to let it know that the client wants to
     register itself as a consumer
@@ -553,7 +614,7 @@ sub consume {
     return $self->nom(@_);
 }
 
-=item nom
+=item B<nom>
 
     consumes messages from a queue, after sending Consume frame
     
@@ -578,12 +639,11 @@ sub nom {
         print STDERR "Frame response is:\n" . Dumper($nom_frame) . "\n";
         return;
     }
-    my ( $nom_data, $nom_hdr, $nom_bod, $nom_ftr, $size )
-        = unpack_raw_data($nom_raw_data);
 
-    my ($nom_msg) = ( unpack_raw_data($nom_data) )[2];
-    $self->{debug} and print "Consumed message: \'" . $nom_msg . "\'\n";
-    return $nom_msg;
+    my ( $get_body_frame, $get_resp_data ) = _get_body_frame($nom_raw_data)
+        or return;
+
+    return $self->_parse_msg( $get_body_frame, $get_resp_data );
 }
 
 sub purge_queue {
@@ -750,7 +810,6 @@ sub _recv {
 
     $resp_len ||= DEFAULT_RECV_LEN;
 
-
     my ( $data, $data_len ) = $self->_read_socket($resp_len);
 
     unless ($data) {
@@ -762,7 +821,7 @@ sub _recv {
     ( $body, $data ) = unpack_data_body( $data, $payload_size ) or return;
 
     # Do we have more to read?
-    ($body, $data) = $self->_has_more_data($body, $data, $payload_size);
+    ( $body, $data ) = $self->_has_more_data( $body, $data, $payload_size );
     ( $footer, $data ) = unpack_data_footer($data) or return;
 
     my $full_msg = $header . $body . $footer;
@@ -770,22 +829,90 @@ sub _recv {
 }
 
 sub _has_more_data {
-    my ($self, $body, $data, $payload_size) = @_;
-    
-    if ( length $body < $payload_size || length $data == 0 ) {
-        my $rem_len = $payload_size + _FOOTER_LENGTH - length $body;
+    my ( $self, $body, $data, $payload_size ) = @_;
+    unless ( ( $data || $body ) && $payload_size ) {
+        return ( $body, $data );
+    }
+    my $tmp_bod;
+    if ( length($body) < $payload_size || length $data == 0 ) {
+
+        # remaining size should be payload + footer + what we currently have
+        my $rem_len = $payload_size + _FOOTER_LENGTH - length($body);
         while ( $rem_len > 0 ) {
             $self->{debug} and print "Getting $rem_len chars more of data\n";
-            my ($chunk, $chunk_len) = $self->_read_socket($rem_len) or return;
+            my ( $chunk, $chunk_len ) = $self->_read_socket($rem_len)
+                or return;
             $rem_len -= $chunk_len;
             $data .= $chunk;
         }
-        my ($tmp_bod)
+
+        # get the body using the size we want - what we currently have
+        ( $tmp_bod, $data )
             = unpack_data_body( $data, $payload_size - length($body) )
             or return;
+
+        # append the data we got to the body
         $body .= $tmp_bod;
     }
-    return ($body, $data);
+    return ( $body, $data );
+}
+
+sub _get_body_frame {
+    my ($get_resp_content) = @_;
+
+    # now that we've got an ack that we have a content,
+    # let's parse that too...
+
+    my ( $get_resp_data, $get_header, $get_body, $get_footer, $get_size )
+        = unpack_raw_data($get_resp_content);
+
+    # check if we've got a real content header back
+    # deserialize the header, body and footer of that content
+    my ($get_body_frame)
+        = deserialize( $get_header . $get_body . $get_footer )
+        or return;
+    if (!UNIVERSAL::isa( $get_body_frame, 'Net::AMQP::Frame::Header' )
+        or !$get_body_frame->header_frame->isa(
+            'Net::AMQP::Protocol::Basic::ContentHeader') )
+    {
+        warn "Unexpected response from server after Basic::GetOk:\n"
+            . Dumper($get_body_frame);
+        return;
+    }
+
+    return ( $get_body_frame, $get_resp_data );
+}
+
+sub _parse_msg {
+    my ( $self, $get_body_frame, $msg_tail ) = @_;
+
+    my ( $msg_body, $msg_footer );
+    my $full_msg_body = $msg_body = '';
+    while ( length($full_msg_body) < $get_body_frame->{body_size} ) {
+
+        # check if we alfready have data. otherwise get some more...
+        unless ($msg_tail) {
+            ($msg_tail) = $self->_read_socket(DEFAULT_RECV_LEN);
+        }
+
+        # now let's unpack the header from the content and see if we have
+        # more to fetch
+        my ( $content_size, $content_data )
+            = ( unpack_data_header($msg_tail) )[ 1, 2 ];
+
+        # now see how much message we have by unpacking the body
+        ( $msg_body, $msg_tail )
+            = unpack_data_body( $content_data, $content_size );
+
+        # check if the data we have is complete
+        ( $msg_body, $msg_tail )
+            = $self->_has_more_data( $msg_body, $msg_tail, $content_size );
+
+        # now unpack the footer
+        ( $msg_footer, $msg_tail ) = unpack_data_footer($msg_tail) or return;
+        $full_msg_body .= $msg_body;
+    }
+    return $full_msg_body;
 }
 
 sub _set_recv_timeout {
@@ -818,7 +945,7 @@ sub _read_socket {
 
     # default length is header + emty body + footer
     $length = _HEADER_LENGTH + _FOOTER_LENGTH if ( !defined($length) );
-    
+
     $self->_set_recv_timeout();
     $self->{debug}
         and print "_read_socket is reading $length characters\n";
@@ -1090,74 +1217,14 @@ sub _check_server_capabilities {
 1;
 __END__
 
-=head1 NAME
-
-Net::AMQP::Haiku - A simple Perl extension for AMQP.
-
-=head1 SYNOPSIS
-
-  use Net::AMQP::Haiku;
-  my $amqp = Net::AMQP::Haiku->new({
-    host=> 'localhost',
-    spec_file => '/path/to/spec/file/amqp'
-  });
-  $amqp->open_channel();
-  $amqp->set_queue('foo');
-  $amqp->send("ohai!");
-  print $amqp->receive();
-
-=head1 DESCRIPTION
-
-    The design for this module is to be as simple as possible -- use only the
-standard perl libraries, apart from Net::AMQP, and be compatible from
-Perl version 5.8.8.
-
-=head1 EXPORT
-
-NAME
-VERSION
-
-=head1 PUBLIC CLASS METHODS
-    
-
-=head2 B<new>
-
-    Creates a new instance of the Net::AMQP::Haiku Object
-    
-    At a minimum, it expects the host name, and path to the AMQP spec file
-    
-    A list of configurable options are as follows:
-    
-    host            - the name of the AMQP server
-    proto           - the protocol used
-    port            - the port to connect to
-    vhost           - the name of the virtual host
-    username        - the name of the user to authenticate to the server as
-    password        - the corresponding password
-    locale          - locale that the client wants to use
-    channel         - the channel id to use
-    auth_mechanism  - the authentication mechanism that will be used
-                        by the client
-    spec_file       - the path to the spec file to use
-    debug           - debugging flag
-    timeout         - connection timeout for establishing initial socket
-    
-    Note that queue, exchange, exchange_type, routing_key should be set
-    using their corresponding methods.
-    
-    The method is expected to die if it doesn't find the spec file on the path
-    given. 
-    
-    This method returns the new instance of the Net::AMQP::Haiku object
-    
-=head2 B<connect>
-
-    Opens a connection to the AMQP server. It takes 
-    
+=back
 
 =head1 SEE ALSO
 
+
 Other useful references:
+
+=over 4
 
 =item Net::AMQP
 
@@ -1172,8 +1239,6 @@ https://github.com/norbu09/Net_AMQP_Simple
 https://github.com/Mutant/Net-Thumper
 
 =back
-
-=item 
 
 =head1 AUTHOR
 
