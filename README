@@ -106,6 +106,14 @@ To install this module type the following:
    make test [OPTIONAL]
    make install
 
+DEVELOPMENT STATE
+
+At this point of the code, it's still under heavy development. So far, I can
+only account for basic publishing, binding and get to work. I have not
+heavily tested consumers yet, but that's currently in progress.
+
+Pull requests are more than welcome.
+
 COPYRIGHT AND LICENCE
 
 The module shall follow the same licensing scheme as Perl.
