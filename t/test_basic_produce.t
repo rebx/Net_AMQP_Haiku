@@ -44,6 +44,7 @@ ok( $p->bind_queue(
     "Test bind to queue $queue" );
 
 for ( my $i = 1; $i <= $num_queue; $i++ ) {
+    $test_msg = $test_msg x ($p->{tuning_parameters}->{frame_max} * $i);
     ok( $p->send($test_msg), "send message $test_msg $i of $num_queue" );
 }
 

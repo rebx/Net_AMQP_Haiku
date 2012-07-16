@@ -59,6 +59,7 @@ ok( $p->purge_queue($queue), "test purge queue $queue before consuming" );
 
 for ( my $i = 1; $i <= $num_queue; $i++ ) {
     $recv_msg = '';
+    $test_msg = $test_msg x ($p->{tuning_parameters}->{frame_max} * $i);
     ok( $recv_msg = $p->nom( $queue, { consumer_tag => $consumer_tag } ),
         "test consume $queue $i of $num_queue" );
     is( $recv_msg, $test_msg,
