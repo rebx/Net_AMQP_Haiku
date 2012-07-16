@@ -362,6 +362,27 @@ sub send {
     return 1;
 }
 
+=item receive
+
+    Pulls messages off a queue.
+    
+    Arguments
+    
+    queue_name - the name of the queue. Optional, if default settings are used
+    recv_args - a hash that can contain the following attributes
+        ticket
+        queue       - optional. filled in from the queue_name argument
+        no_ack      - don't send acknowledgements to the server
+        reply_to    - specify a reply to name
+        routing_key - specify the routing key name
+        exchange    - the name of the exchange
+        
+    The function returns the message pulled off the queue on success.
+    On failure, it will return an empty string if the server's response is
+    GetEmpty; undef will be returned otherwise
+    
+=cut
+
 sub receive {
     my ( $self, $queue_name, $recv_args ) = @_;
 
@@ -437,7 +458,6 @@ sub receive {
         # now unpack the footer
         ( $msg_footer, $msg_tail ) = unpack_data_footer($msg_tail) or return;
         $full_msg_body .= $msg_body;
-        #$msg_body = '';
     }
     return $full_msg_body;
 }
