@@ -3,7 +3,8 @@
 
 use strict;
 use File::Spec;
-use Test::More 'tests' => 35;
+
+use Test::More 'tests' => 344;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -110,17 +111,51 @@ ok( $msg_recv = $f->get(
     "Test get using reply_to $uuid  routing_key $routing_key" );
 is( "$msg_recv", "$msg_send", "Test got the ping message $msg_send" );
 
-undef $msg_recv;
-my $long_msg = (split(//, $msg_send))[1] x ($f->{tuning_parameters}->{frame_max} * 2);
-my $len_long_msg = length($long_msg);
-ok($f->send($long_msg), "test send long message of length " . $len_long_msg );
-#$f->debug(1);
-ok($msg_recv = $f->get($queue), "test get long message of length $len_long_msg" );
-#ok($f->send($long_msg, {reply_to=> $uuid, exchange=> $exchange, routing_key => $routing_key}), "test send long message of length " . $len_long_msg );
-#ok($msg_recv = $f->get($queue, {reply_to=> $uuid, exchange=> $exchange, routing_key => $routing_key}), "test get long message of length $len_long_msg" );
-#$f->debug(0);
-is (length($msg_recv), $len_long_msg, "test long message is of equal size");
-#is ($msg_recv, $long_msg, "test long message is equal");
+for ( my $j = 0.5; $j < 20; $j += 0.5 ) {
+    undef $msg_recv;
+    my $long_msg
+        = ( split( //, $msg_send ) )[ int( rand( length($msg_send) ) ) ]
+        x ( $f->{tuning_parameters}->{frame_max} * $j );
+    my $len_long_msg = length($long_msg);
+    ok( $f->send($long_msg),
+        "test send long message of length " . $len_long_msg );
+    ok( $msg_recv = $f->get($queue),
+        "test get long message of length $len_long_msg" );
+    is( length($msg_recv), $len_long_msg,
+        "test long message is of equal size" );
+    is( $msg_recv, $long_msg, "test long message is equal" );
+}
+for ( my $j = 0.5; $j < 20; $j += 0.5 ) {
+    undef $msg_recv;
+    my $long_msg
+        = ( split( //, $msg_send ) )[ int( rand( length($msg_send) ) ) ]
+        x ( $f->{tuning_parameters}->{frame_max} * $j );
+    my $len_long_msg = length($long_msg);
+    ok( $f->send(
+            $long_msg,
+            $queue,
+            {   reply_to    => $uuid,
+                exchange    => $exchange,
+                routing_key => $routing_key
+            } ),
+        "test send long message of length "
+            . $len_long_msg
+            . " to queue $queue with exchange $exchange and routing_key $routing_key"
+    );
+    ok( $msg_recv = $f->get(
+            $queue,
+            {   reply_to    => $uuid,
+                exchange    => $exchange,
+                routing_key => $routing_key
+            } ),
+        "test get long message of length "
+            . $len_long_msg
+            . " to queue $queue with exchange $exchange and routing_key $routing_key"
+    );
+    is( length($msg_recv), $len_long_msg,
+        "test long message is of equal size" );
+    is( $msg_recv, $long_msg, "test long message is equal" );
+}
 ok( $f->purge_queue($queue),  "Test purge queue $queue" );
 ok( $f->delete_queue($queue), "test delete queue $queue" );
 ok( $f->close(),              "test close connection properly" );

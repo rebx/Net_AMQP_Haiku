@@ -338,8 +338,8 @@ sub send {
     $publish_args->{max_frame_size} = $self->{tuning_parameters}->{frame_max}
         - ( _HEADER_LENGTH + _FOOTER_LENGTH + 1 );
     $publish_args->{routing_key} ||= $queue_name;
-    $publish_args->{reply_to} ||= $queue_name;
-    $publish_args->{channel} ||= $self->{channel};
+    $publish_args->{reply_to}    ||= $queue_name;
+    $publish_args->{channel}     ||= $self->{channel};
 
     my ( $pub_frame, $frame_header, $send_payload )
         = serialize( $msg, $self->{username}, $publish_args )
@@ -412,30 +412,32 @@ sub receive {
         and print "Get body frame:\n" . Dumper($get_body_frame) . "\n";
 
     my ( $msg_body, $msg_tail, $msg_footer );
-    my $full_msg_body =  $msg_body = '';
+    my $full_msg_body = $msg_body = '';
     $msg_tail = $get_resp_data;
-    while (length($full_msg_body) < $get_body_frame->{body_size}) {
+    while ( length($full_msg_body) < $get_body_frame->{body_size} ) {
+
+        # check if we alfready have data. otherwise get some more...
         unless ($msg_tail) {
             ($msg_tail) = $self->_read_socket(DEFAULT_RECV_LEN);
         }
+
         # now let's unpack the header from the content and see if we have
         # more to fetch
-        my ($content_header,  $content_size, $content_data,
-            $content_type_id, $content_channel
-        ) = unpack_data_header($msg_tail);
-    
+        my ( $content_size, $content_data )
+            = ( unpack_data_header($msg_tail) )[ 1, 2 ];
+
         # now see how much message we have by unpacking the body
         ( $msg_body, $msg_tail )
             = unpack_data_body( $content_data, $content_size );
-        
-        print "Message body is currently " . length $msg_body . " long\n";
-        ($msg_body, $msg_tail) = $self->_has_more_data($msg_body, $msg_tail, $content_size);
-        
+
+        # check if the data we have is complete
+        ( $msg_body, $msg_tail )
+            = $self->_has_more_data( $msg_body, $msg_tail, $content_size );
+
         # now unpack the footer
-        ($msg_footer, $msg_tail) = unpack_data_footer($msg_tail) or return;
+        ( $msg_footer, $msg_tail ) = unpack_data_footer($msg_tail) or return;
         $full_msg_body .= $msg_body;
-        print "Message body is currently " . length $full_msg_body . " long\n";
-        $msg_body = '';
+        #$msg_body = '';
     }
     return $full_msg_body;
 }
@@ -754,7 +756,6 @@ sub _recv {
 
     $resp_len ||= DEFAULT_RECV_LEN;
 
-
     my ( $data, $data_len ) = $self->_read_socket($resp_len);
 
     unless ($data) {
@@ -766,7 +767,7 @@ sub _recv {
     ( $body, $data ) = unpack_data_body( $data, $payload_size ) or return;
 
     # Do we have more to read?
-    ($body, $data) = $self->_has_more_data($body, $data, $payload_size);
+    ( $body, $data ) = $self->_has_more_data( $body, $data, $payload_size );
     ( $footer, $data ) = unpack_data_footer($data) or return;
 
     my $full_msg = $header . $body . $footer;
@@ -774,25 +775,30 @@ sub _recv {
 }
 
 sub _has_more_data {
-    my ($self, $body, $data, $payload_size) = @_;
-    unless (($data || $body) && $payload_size) {
-        return ($body, $data);
+    my ( $self, $body, $data, $payload_size ) = @_;
+    unless ( ( $data || $body ) && $payload_size ) {
+        return ( $body, $data );
     }
     my $tmp_bod;
-    if ( length $body < $payload_size || length $data == 0 ) {
-        my $rem_len = $payload_size + _FOOTER_LENGTH - length $body;
+    if ( length($body) < $payload_size || length $data == 0 ) {
+
+        # remaining size should be payload + footer + what we currently have
+        my $rem_len = $payload_size + _FOOTER_LENGTH - length($body);
         while ( $rem_len > 0 ) {
             $self->{debug} and print "Getting $rem_len chars more of data\n";
-            my ($chunk, $chunk_len) = $self->_read_socket($rem_len) or return;
+            my ( $chunk, $chunk_len ) = $self->_read_socket($rem_len)
+                or return;
             $rem_len -= $chunk_len;
             $data .= $chunk;
         }
-        ($tmp_bod, $data)
+        # get the body using the size we want - what we currently have
+        ( $tmp_bod, $data )
             = unpack_data_body( $data, $payload_size - length($body) )
             or return;
+        # append the data we got to the body
         $body .= $tmp_bod;
     }
-    return ($body, $data);
+    return ( $body, $data );
 }
 
 sub _set_recv_timeout {
@@ -825,7 +831,7 @@ sub _read_socket {
 
     # default length is header + emty body + footer
     $length = _HEADER_LENGTH + _FOOTER_LENGTH if ( !defined($length) );
-    
+
     $self->_set_recv_timeout();
     $self->{debug}
         and print "_read_socket is reading $length characters\n";
