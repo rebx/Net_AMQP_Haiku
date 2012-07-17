@@ -33,7 +33,6 @@ VERSION
 
 =cut
 
-
 use 5.008008;
 use strict;
 use warnings;
@@ -474,6 +473,12 @@ sub receive {
 
     # unpack the response frame and check if it's a GetOk
     my ($get_resp) = deserialize($get_resp_frame) or return;
+    if ( !$get_resp->can('method_frame') ) {
+        warn "Invalid frame response after GetOk";
+        $self->{debug}
+            and print "Frame response was\n" . Dumper($get_resp) . "\n";
+        return;
+    }
     if ( !$get_resp->method_frame->isa('Net::AMQP::Protocol::Basic::GetOk') )
     {
         my $ret_resp = (
@@ -864,7 +869,8 @@ sub _get_body_frame {
     # let's parse that too...
 
     my ( $get_resp_data, $get_header, $get_body, $get_footer, $get_size )
-        = unpack_raw_data($get_resp_content);
+        = unpack_raw_data($get_resp_content)
+        or return;
 
     # check if we've got a real content header back
     # deserialize the header, body and footer of that content
