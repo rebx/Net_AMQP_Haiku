@@ -114,6 +114,13 @@ heavily tested consumers yet, but that's currently in progress.
 
 Pull requests are more than welcome.
 
+FEATURES IN PROGRESS
+
+* Finish the consumer method
+
+* Decide whether to add an internal logger or just provide a means of importing
+  or using other logging modules
+
 COPYRIGHT AND LICENCE
 
 The module shall follow the same licensing scheme as Perl.
