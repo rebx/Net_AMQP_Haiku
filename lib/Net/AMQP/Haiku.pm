@@ -172,6 +172,24 @@ sub debug {
     Opens a connection to the AMQP server. No argument is taken in as
     the host, port, etc. attributes are declared on the object instance    
 
+    The method sets the is_connected instance variable and returns 1 (true)
+    on success.
+    It raises a die if it's unable to connect to the server,
+    or if it's unable to use the spec file given
+    
+    Suggested use
+    
+    local $@;
+    try {
+        $bug = Net::AMQP::Haiku->new({host=>'foo', spec_file=>'amqp0-8.xml'}) or
+            die "Unable to create object instance!: $!\n";
+    } catch {
+        my $err = $_;
+        $@ = $err;
+        warn $@;
+    };
+    return 0 if ($@);
+    
 =cut
 
 sub connect {
@@ -182,6 +200,18 @@ sub connect {
     $self->{is_connected} = 1;
     return ( $self->{is_connected} );
 }
+
+=item B<open_channel>
+
+    Creates a communication stream between the AMQP server and client
+    
+    Arguments
+    
+    channel - the channel id (integer) the client wants to use
+    
+    The method returns 1 (true) on success. 0 or undef otherwise
+    
+=cut
 
 sub open_channel {
     my ( $self, $channel ) = @_;
@@ -204,6 +234,12 @@ sub open_channel {
 
     return 1;
 }
+
+=item B<close_channel>
+
+    Closes the established communication stream
+    
+=cut
 
 sub close_channel {
     my ( $self, $channel ) = @_;
@@ -237,6 +273,13 @@ sub close_connection {
             'Net::AMQP::Protocol::Connection::CloseOk') );
     return 1;
 }
+
+=item B<close>
+
+    This method sends a message to the server that the client will now stop
+    communicating with it
+    
+=cut
 
 sub close {
     my ($self) = @_;
@@ -376,14 +419,17 @@ sub set_exchange {
     queue_name - the name of the queue to publish to
     publish args - a hash that can have the following entries
     
-        routing_key
-        reply_to
+        routing_key - a virtual address that an exchange uses to route messages
+        reply_to - a header that specifies that the message is a response of
         correlation_id
-        channel
-        exchange
-        ticket
-        immediate
-        mandatory
+        channel - the channel id [OPTIONAL]
+        exchange - the name of the exchange to send messages to
+        ticket - a special token that a server provides for accessing a
+            specific realm [OPTIONAL]
+        immediate - an undeliverable message with a return method will be sent
+            back if there are no available consumers
+        mandatory - tells the server to not drop the message silently if the
+            message cannot be routed
         
         
     The function returns a value of 1 if the message is sent properly. If it
@@ -443,8 +489,9 @@ sub send {
     
     queue_name - the name of the queue. Optional, if default settings are used
     recv_args - a hash that can contain the following attributes
-        ticket
-        queue       - optional. filled in from the queue_name argument
+        ticket - a special token that a server provides for accessing a
+            specific realm [OPTIONAL]
+        queue       - filled in from the queue_name argument [OPTIONAL]
         no_ack      - don't send acknowledgements to the server
         reply_to    - specify a reply to name
         routing_key - specify the routing key name
@@ -489,8 +536,7 @@ sub receive {
     $self->{debug}
         and print "Got Basic::GetOk response:\n" . Dumper($get_resp) . "\n";
 
-    my ( $get_body_frame, $get_resp_data )
-        = get_body_frame($get_resp_content)
+    my ( $get_body_frame, $get_resp_data ) = get_body_frame($get_resp_content)
         or return;
 
     return $self->_parse_msg( $get_body_frame, $get_resp_data );
@@ -509,13 +555,19 @@ sub get {
 
 =item B<bind_queue>
 
-    bind an exchang to a queue
+    Bind an exchange to a queue. This method creates a relationship between the
+    message queue and the exchange
     
-    expects a hash with attributes
+    Arguments
+    
+    an optional hash with attributes
         
         queue
         routing_key
         exchange
+        
+    Returns 1 on success; 0 or none otherwise
+    
 =cut
 
 sub bind_queue {
@@ -651,6 +703,22 @@ sub nom {
     return $self->_parse_msg( $get_body_frame, $get_resp_data );
 }
 
+=item B<purge_queue>
+
+    This method tells the server to remove all messages in a specific queue
+    
+    Arguments
+    
+    queue_name - the name of the queue to purge
+    purge_args - a hash that can have the following attributes
+        ticket - the access token [OPTIONAL]
+        queue - the name of the queue to purge [OPTIONAL]
+        nowait - don't send a reply back
+
+    Returns 1 on success; 0 or none otherwise
+    
+=cut
+
 sub purge_queue {
     my ( $self, $queue_name, $purge_args ) = @_;
 
@@ -683,6 +751,24 @@ sub purge_queue {
     return 1;
 }
 
+=item B<delete_queue>
+
+    Removes a message queue
+    
+    Arguments
+    
+    queue_name - the name of the queue to delete [MANDATORY]
+    cust_delete_args - an optional hash that can have the following attributes
+        ticket - the token access for the realm
+        queue - the name of the queue [OPTIONAL]
+        if_unused - only delete the queue if there are no consumers
+        if_empty - only delete the queue if the queue is empty
+        nowait - don't send a reply back
+
+    Returns 1 on success; 0 or none otherwise
+    
+=cut
+
 sub delete_queue {
     my ( $self, $queue_name, $cust_delete_args ) = @_;
 
@@ -709,6 +795,18 @@ sub delete_queue {
         and print "Queue $delete_args->{queue} has been deleted.\n";
     return 1;
 }
+
+=item B<halt_consumption>
+
+    Tells the server that the client will now stop consuming messages
+    
+    Arguments
+    
+    consumer_tag - the consumer tag assigned to/by the client [OPTIONAL]
+    
+    Returns 1 on success; 0 or none otherwise
+    
+=cut
 
 sub halt_consumption {
     my ( $self, $consumer_tag ) = @_;
