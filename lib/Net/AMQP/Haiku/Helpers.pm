@@ -4,7 +4,7 @@ use strict;
 use warnings;
 require Exporter;
 our @ISA    = qw(Exporter);
-our @EXPORT = qw(deserialize serialize make_get_header
+our @EXPORT = qw(deserialize serialize make_get_header get_body_frame
     unpack_data_header unpack_data_body unpack_data_footer unpack_raw_data
 );
 
@@ -159,6 +159,33 @@ sub check_exchange_type {
         return;
     }
     return 1;
+}
+
+sub get_body_frame {
+    my ($get_resp_content) = @_;
+
+    # now that we've got an ack that we have a content,
+    # let's parse that too...
+
+    my ( $get_resp_data, $get_header, $get_body, $get_footer, $get_size )
+        = unpack_raw_data($get_resp_content)
+        or return;
+
+    # check if we've got a real content header back
+    # deserialize the header, body and footer of that content
+    my ($get_body_frame)
+        = deserialize( $get_header . $get_body . $get_footer )
+        or return;
+    if (!UNIVERSAL::isa( $get_body_frame, 'Net::AMQP::Frame::Header' )
+        or !$get_body_frame->header_frame->isa(
+            'Net::AMQP::Protocol::Basic::ContentHeader') )
+    {
+        warn "Unexpected response from server after Basic::GetOk:\n"
+            . Dumper($get_body_frame);
+        return;
+    }
+
+    return ( $get_body_frame, $get_resp_data );
 }
 
 1;
