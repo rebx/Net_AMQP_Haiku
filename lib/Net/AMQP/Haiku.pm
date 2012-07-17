@@ -1070,7 +1070,7 @@ sub _check_frame_response {
             . $response . '.'
             . (
             ( defined( $frame->method_frame->{reply_text} ) )
-            ? 'Error: ' . $frame->method_frame->{reply_text}
+            ? ' Error: ' . $frame->method_frame->{reply_text}
             : '' );
         $self->{debug}
             and print STDERR "Got response:\n" . Dumper($frame) . "\n";

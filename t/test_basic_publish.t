@@ -4,7 +4,7 @@
 use strict;
 use File::Spec;
 
-use Test::More 'tests' => 344;
+use Test::More 'tests' => 346;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -62,7 +62,13 @@ ok( $f->open_channel(), "test open channel" );
 
 ok( $f->set_queue($queue), "test set queue to $queue" );
 is( $f->{queue}, $queue, "test queue attribute is set to $queue" );
-ok( $f->delete_queue($queue), "test delete queue $queue" );
+SKIP: {
+    skip "queue $queue may not be empty", 1,
+        unless ok( $f->delete_queue($queue), "test delete queue $queue" );
+}
+ok( $f->set_queue($queue), "test set queue to $queue" );
+ok( $f->delete_queue( $queue, { if_empty => 0, if_unused => 0 } ),
+    "test delete queue with if_empty and if_unused set to false" );
 ok( $f->set_queue(
         $queue, { durable => 0, auto_delete => 0, exclusive => 0 } ),
     "test set queue to $queue with extra attributes" );
