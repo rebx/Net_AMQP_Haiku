@@ -4,7 +4,7 @@
 use strict;
 use File::Spec;
 
-use Test::More 'tests' => 346;
+use Test::More 'tests' => 349;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -58,8 +58,14 @@ isnt( $f->{tuning_parameters}->{frame_max},
 isnt( $f->{tuning_parameters}->{heartbeat},
     undef, "test tuning parameter heartbeat is defined" );
 
+# open_channel test
 ok( $f->open_channel(), "test open channel" );
 
+# set_qos test
+ok( $f->set_qos( { prefetch_count => 1 } ),
+    "test set qos with prefetch_count => 1" );
+
+# set_queue and delete_queue tests
 ok( $f->set_queue($queue), "test set queue to $queue" );
 is( $f->{queue}, $queue, "test queue attribute is set to $queue" );
 SKIP: {
@@ -73,6 +79,18 @@ ok( $f->set_queue(
         $queue, { durable => 0, auto_delete => 0, exclusive => 0 } ),
     "test set queue to $queue with extra attributes" );
 is( $f->{queue}, $queue, "test queue attribute is set to $queue" );
+
+# set_exchange and delete_exchange tests
+ok( $f->set_exchange(
+        $exchange,
+        {   type        => $exchange_type,
+            durable     => 0,
+            auto_delete => 0,
+            internal    => 0
+        } ),
+    "test set exchange $exchange type $exchange_type" );
+ok( $f->delete_exchange($exchange),
+    "test delete exchange $exchange of type $exchange_type" );
 ok( $f->set_exchange(
         $exchange,
         {   type        => $exchange_type,
@@ -89,6 +107,7 @@ ok( $f->bind_queue(
     "test bind exchange $exchange to queue $queue with routing key $routing_key"
 );
 
+# message publish tests
 ok( $f->send($msg_send), "test send message to server" );
 ok( $msg_recv = $f->receive($queue), "Test get message on queue $queue" );
 is( "$msg_recv", "$msg_send", "Test got the ping message $msg_send" );
