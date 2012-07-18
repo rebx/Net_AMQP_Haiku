@@ -4,7 +4,7 @@
 use strict;
 use File::Spec;
 
-use Test::More 'tests' => 351;
+use Test::More 'tests' => 353;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -18,6 +18,7 @@ BEGIN {
     use lib "$Bin/../lib";
     use Net::AMQP::Haiku;
     use_ok('Net::AMQP::Haiku');
+    use Net::AMQP::Haiku::Constants qw(DEFAULT_TICKET);
 }
 
 require_ok('Net::AMQP::Haiku');
@@ -67,6 +68,11 @@ is( $f->set_qos( { global => 0 } ),
     undef, "test set qos with no prefetch argument should fail" );
 ok( $f->set_qos( { prefetch_count => 1 } ),
     "test set qos with prefetch_count => 1" );
+
+# get_ticket tests
+ok( $f->get_ticket('testrealm'), "test get access ticket" );
+isnt( $f->{ticket}, DEFAULT_TICKET,
+    "test access ticket isn't set to the default one" );
 
 # set_queue and delete_queue tests
 ok( $f->set_queue($queue), "test set queue to $queue" );
