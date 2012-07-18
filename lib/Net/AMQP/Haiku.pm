@@ -409,6 +409,46 @@ sub set_exchange {
     return 1;
 }
 
+=item B<set_qos>
+
+    Specify QoS agreement with the server
+    
+    Arguments
+    
+    The function takes in a hash that can have the following attributees
+        prefetch_size - specify the prefetch length
+        prefetch_count - specify the prefetch in terms of whole messages
+        global - apply the prefetch_* settings globally for this connection.
+            default value is false
+        
+    Returns 1 on success; 0 or none otherwise
+    
+=cut
+
+sub set_qos {
+    my ( $self, $qos_args ) = @_;
+
+    unless ($qos_args) {
+        warn "No QoS tuning parameter(s) given";
+        return;
+    }
+
+    unless ( $qos_args->{prefetch_size} || $qos_args->{prefetch_count} ) {
+        warn "No prefetch tuning parameter(s) given";
+        return;
+    }
+    my $def_qos_props = Net::AMQP::Haiku::Properties::def_qos_properties();
+    $qos_args = { %{$def_qos_props}, %{$qos_args} };
+
+    my $qos_frame = Net::AMQP::Protocol::Basic::Qos->new( %{$qos_args} );
+    $self->_send_frames($qos_frame) or return;
+
+    return 0
+        if (
+        !$self->_check_frame_response('Net::AMQP::Protocol::Basic::QosOk') );
+    return 1;
+}
+
 =item B<send>
 
     Sends/Publishes a message to the queue
@@ -751,6 +791,47 @@ sub purge_queue {
     return 1;
 }
 
+=item B<delete_exchange>
+
+    Removes a message exchange
+    
+    Arguments
+    
+    exchange_name - the name of the exchange to delete [MANDATORY]
+    cust_args - an optional hash that can have the following attributes
+        ticket - the token access for the realm
+        exchange - the name of the exchange [OPTIONAL]
+        if_unused - only delete the exchange if there are no queue bindings
+        nowait - don't send a reply back
+
+    Returns 1 on success; 0 or none otherwise
+    
+=cut
+
+sub delete_exchange {
+    my ( $self, $exchange_name, $cust_args ) = @_;
+
+    unless ($exchange_name) {
+        warn "No exchange name given to delete";
+        return;
+    }
+
+    $cust_args = {};
+    $cust_args->{exchange} = $exchange_name;
+    my $def_exch_del_args
+        = Net::AMQP::Haiku::Properties::def_queue_delete_properties();
+    my $delete_args = { %{$def_exch_del_args}, %{$cust_args} };
+    my $del_exch_frame
+        = Net::AMQP::Protocol::Exchange::Delete->new( %{$delete_args} );
+    $self->_send_frames($del_exch_frame) or return;
+    return 0
+        if (
+        !$self->_check_frame_response(
+            'Net::AMQP::Protocol::Exchange::DeleteOk') );
+    $self->{debug} and print "Exchange $exchange_name has been deleted\n";
+    return 1;
+}
+
 =item B<delete_queue>
 
     Removes a message queue
@@ -1071,7 +1152,7 @@ sub _check_frame_response {
             . (
             ( defined( $frame->method_frame->{reply_text} ) )
             ? ' Error: ' . $frame->method_frame->{reply_text}
-            : '' );
+            : '' ) . "\n";
         $self->{debug}
             and print STDERR "Got response:\n" . Dumper($frame) . "\n";
         return 0;

@@ -78,6 +78,12 @@ sub def_consume_properties {
     };
 }
 
+sub def_qos_properties {
+    return {
+        global         => DEFAULT_QOS_FLAG_GLOBAL,
+    };
+}
+
 sub def_queue_delete_properties {
     return {
         ticket    => DEFAULT_TICKET,

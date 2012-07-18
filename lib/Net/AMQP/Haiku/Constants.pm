@@ -18,6 +18,7 @@ our @EXPORT = qw(
     FLAG_AUTO_DELETE FLAG_DURABLE FLAG_NO_WAIT FLAG_EXCLUSIVE FLAG_PASSIVE
     @PUBLISH_FRAME_ATTRS @HEADER_FRAME_ATTRS FLAG_NO_LOCAL FLAG_INTERNAL
     FLAG_IF_UNUSED FLAG_IF_EMPTY
+    DEFAULT_QOS_FLAG_GLOBAL DEFAULT_QOS_SIZE DEFAULT_QOS_COUNT
     $AUTH_MECHANISM_LIST $EXCHANGE_TYPES
 );
 
@@ -71,9 +72,12 @@ use constant FLAG_NO_LOCAL    => 0; # no_local flag
 use constant FLAG_IF_UNUSED   => 1; # flag for deleting a queue if it's unused
 use constant FLAG_IF_EMPTY    => 1; # flag for deleting a queue if it's empty
 use constant FLAG_AUTO_DELETE => 0; # automaticaly delete the message
-use constant DEFAULT_CONSUMER_TAG   => '';     # default consumer tag
-use constant DEFAULT_CORRELATION_ID => '1';    #
-use constant FLAG_INTERNAL          => 0;
+use constant DEFAULT_CONSUMER_TAG    => '';     # default consumer tag
+use constant DEFAULT_CORRELATION_ID  => '1';    #
+use constant FLAG_INTERNAL           => 0;
+use constant DEFAULT_QOS_SIZE        => 0;
+use constant DEFAULT_QOS_COUNT       => 1;
+use constant DEFAULT_QOS_FLAG_GLOBAL => 0;
 ### CONSTANTS ###
 
 # frame attributes
