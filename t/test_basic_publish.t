@@ -4,7 +4,7 @@
 use strict;
 use File::Spec;
 
-use Test::More 'tests' => 349;
+use Test::More 'tests' => 351;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -62,6 +62,9 @@ isnt( $f->{tuning_parameters}->{heartbeat},
 ok( $f->open_channel(), "test open channel" );
 
 # set_qos test
+is( $f->set_qos(), undef, "test set qos with no arguments should fail" );
+is( $f->set_qos( { global => 0 } ),
+    undef, "test set qos with no prefetch argument should fail" );
 ok( $f->set_qos( { prefetch_count => 1 } ),
     "test set qos with prefetch_count => 1" );
 
