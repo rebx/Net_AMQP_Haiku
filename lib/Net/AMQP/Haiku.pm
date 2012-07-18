@@ -449,6 +449,50 @@ sub set_qos {
     return 1;
 }
 
+=item B<get_ticket>
+
+    Request for an access ticket for an access realm
+=cut
+
+sub get_ticket {
+    my ( $self, $realm, $ticket_args ) = @_;
+
+    unless ($realm) {
+        warn "No access realm given";
+        return;
+    }
+
+    $ticket_args ||= {};
+    $ticket_args->{realm} = $realm;
+
+    my $def_ticket_props
+        = Net::AMQP::Haiku::Properties::def_access_realm_properties();
+
+    $ticket_args = { %{$def_ticket_props}, %{$ticket_args} };
+
+    my $access_frame
+        = Net::AMQP::Protocol::Access::Request->new( %{$ticket_args} );
+    $self->_send_frames($access_frame) or return;
+
+    my ($access_resp) = $self->_recv_frames() or return;
+
+    if (!$access_resp->can('method_frame')
+        or !$access_resp->method_frame->isa(
+            'Net::AMQP::Protocol::Access::RequestOk') )
+    {
+        warn "Unable to get access to realm $realm";
+        $self->{debug}
+            and print "Frame response from server:\n"
+            . Dumper($access_resp) . "\n";
+        return;
+    }
+    $self->{debug}
+        and print "Granted accesss to realm $realm Response frame is\n"
+        . Dumper($access_resp) . "\n";
+    $self->{ticket} = $access_resp->method_frame->ticket;
+    return 1;
+}
+
 =item B<send>
 
     Sends/Publishes a message to the queue

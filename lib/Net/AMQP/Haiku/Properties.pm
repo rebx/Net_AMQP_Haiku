@@ -79,8 +79,16 @@ sub def_consume_properties {
 }
 
 sub def_qos_properties {
+    return { global => DEFAULT_QOS_FLAG_GLOBAL, };
+}
+
+sub def_access_realm_properties {
     return {
-        global         => DEFAULT_QOS_FLAG_GLOBAL,
+        exclusive => FLAG_EXCLUSIVE,
+        passive   => FLAG_PASSIVE,
+        active    => FLAG_FALSE,
+        write     => FLAG_TRUE,
+        read      => FLAG_TRUE,
     };
 }
 
