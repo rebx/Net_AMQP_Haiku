@@ -9,5 +9,3 @@ lib/Net/AMQP/Haiku/Helpers.pm
 t/amqp0-8.xml
 t/test_basic_publish.t
 t/test_conf.yaml
-t/test_basic_bind.t
-t/test_basic_produce.t
