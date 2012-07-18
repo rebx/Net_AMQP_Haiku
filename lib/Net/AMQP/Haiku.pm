@@ -997,7 +997,7 @@ sub _recv {
     my ( $data, $data_len ) = $self->_read_socket($resp_len);
 
     unless ($data) {
-        $data .= $self->_read_socket($resp_len) or return;
+        $data = $self->_read_socket($resp_len) or return;
     }
     my ( $header, $body, $footer, $payload_size );
 
