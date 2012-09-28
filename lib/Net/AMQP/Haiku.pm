@@ -284,7 +284,8 @@ sub close_connection {
 sub close {
     my ($self) = @_;
 
-    return 1 if ( !$self->{is_connected} );
+    return 1 if ( !$self->{is_connected} or !defined( $self->{connection} ) );
+
     local $@;
     try {
         $self->close_connection()
@@ -299,6 +300,7 @@ sub close {
         warn $@ if ( $@ and $self->{debug} );
     };
     return 0 if ($@);
+    $self->{is_connected} = 0;
     return 1;
 }
 
