@@ -4,7 +4,7 @@
 use strict;
 use File::Spec;
 
-use Test::More 'tests' => 353;
+use Test::More 'tests' => 354;
 use Test::Exception;
 use YAML qw(LoadFile);
 my $name    = 'Net::AMQP::Haiku';
@@ -38,6 +38,10 @@ my $routing_key   = $test_conf_hash->{routing_key};
 my $exchange      = $test_conf_hash->{exchange};
 my $exchange_type = $test_conf_hash->{exchange_type};
 my $reply_to      = $test_conf_hash->{reply_to};
+my $user          = $test_conf_hash->{user};
+my $pass          = $test_conf_hash->{pass};
+my $vhost         = $test_conf_hash->{vhost};
+
 my ( $msg_recv, $uuid );
 
 my $amqp_spec_file = File::Spec->join( $Bin, 'amqp0-8.xml' );
@@ -46,7 +50,13 @@ ok( $t = Net::AMQP::Haiku->new(), "test new instance of $name" );
 dies_ok { $t->spec_file('/foo/bar/baz.spec') }
 'instance dies when spec file does not exist';
 my $f = Net::AMQP::Haiku->new(
-    { host => $host, spec_file => $amqp_spec_file, debug => $debug } );
+    {   host      => $host,
+        username  => $user,
+        password  => $pass,
+        spec_file => $amqp_spec_file,
+        vhost     => $vhost,
+        debug     => $debug
+    } );
 ok( $f->connect(), "test connect to $host:$port" );
 isnt( $f->{connection}, undef, "test socket is not undef" );
 ok( $f->{connection}->isa('IO::Socket::INET'),
@@ -193,5 +203,7 @@ for ( my $j = 0.5; $j < 20; $j += 0.5 ) {
 ok( $f->purge_queue($queue),  "Test purge queue $queue" );
 ok( $f->delete_queue($queue), "test delete queue $queue" );
 ok( $f->close(),              "test close connection properly" );
+ok( $f->close(),
+    "test close an already closed connection connection properly" );
 
 done_testing();
